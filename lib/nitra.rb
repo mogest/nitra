@@ -1,12 +1,17 @@
 class Nitra
+  attr_accessor :load_schema, :migrate, :debug
+  attr_accessor :process_count, :environment
+
+  def initialize
+    self.process_count = 4
+    self.environment = "nitra"
+  end
+
   def run
     start_time = Time.now
-    ENV["RAILS_ENV"] = "nitra"
+    ENV["RAILS_ENV"] = environment
 
-    process_count = 4
-    debug = false
-
-    if false
+    if load_schema
       process_count.times do |index|
         puts "initialising database #{index+1}..."
         ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
@@ -14,12 +19,19 @@ class Nitra
       end
     end
 
+    if migrate
+      process_count.times do |index|
+        puts "migrating database #{index+1}..."
+        ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
+        system("bundle exec rake db:migrate")
+      end
+    end
+
     puts "loading rails environment..." if debug
 
     ENV["TEST_ENV_NUMBER"] = "1"
 
-    require 'config/environment'
-    require 'rspec'
+    require 'spec/spec_helper'
     require 'stringio'
 
     ActiveRecord::Base.connection.disconnect!
@@ -42,7 +54,7 @@ class Nitra
         Rails.cache.reset if Rails.cache.respond_to?(:reset)
 
         puts "announcing availability" if debug
-        wr.write("0\n")
+        wr.write("0,0\n")
 
         io = StringIO.new
         loop do
@@ -52,10 +64,12 @@ class Nitra
           filename = filename.chomp
           puts "#{index} starting to process #{filename}" if debug
 
-          RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
+          result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
           RSpec.reset
 
-          wr.write("#{io.string.length}\n#{io.string}")
+          puts "#{index} #{filename} processed" if debug
+
+          wr.write("#{result.to_i},#{io.string.length}\n#{io.string}")
           io.string = ""
         end
       end
@@ -78,11 +92,15 @@ class Nitra
     @failure_count = 0
 
     result = ""
+    worst_return_code = 0
+
     while readers.length > 0
       print_progress
       fds = IO.select(readers)
       fds.first.each do |fd|
-        length = fd.gets
+        return_code, length = fd.gets.split(",")
+
+        worst_return_code = return_code.to_i if worst_return_code < return_code.to_i
 
         if length.nil?
           break
@@ -116,6 +134,8 @@ class Nitra
     result = result.gsub(/\n\n\n+/, "\n\n")
     puts result
     puts "\nFinished in #{"%0.1f" % (Time.now-start_time)} seconds"
+
+    worst_return_code
   end
 
   protected
