@@ -1,3 +1,5 @@
+require 'stringio'
+
 class Nitra
   attr_accessor :load_schema, :migrate, :debug
   attr_accessor :process_count, :environment
@@ -11,6 +13,41 @@ class Nitra
     start_time = Time.now
     ENV["RAILS_ENV"] = environment
 
+    initialise_database
+
+    load_rails_environment
+
+    pipes = fork_workers
+
+    files = Dir["spec/**/*_spec.rb"]
+    return if files.empty?
+
+    trap("SIGTERM") { $aborted = true }
+    trap("SIGINT") { $aborted = true }
+
+    result = hand_out_files_to_workers(files, pipes)
+
+    trap("SIGTERM", "DEFAULT")
+    trap("SIGINT", "DEFAULT")
+
+    result = result.gsub(/\n\n\n+/, "\n\n")
+    puts result
+    puts "\nAborted by signal" if $aborted
+    puts "\nFinished in #{"%0.1f" % (Time.now-start_time)} seconds"
+
+    $aborted ? 255 : worst_return_code
+  end
+
+  protected
+  def print_progress
+    bar_length = @columns - 50
+    progress = @files_completed / @file_count.to_f
+    length_completed = (progress * bar_length).to_i
+    length_to_go = bar_length - length_completed
+    print "[#{"X" * length_completed}#{"." * length_to_go}] #{@files_completed}/#{@file_count} (#{"%0.1f%%" % (progress*100)}) * #{@example_count} examples, #{@failure_count} failures\r"
+  end
+
+  def initialise_database
     if load_schema
       process_count.times do |index|
         puts "initialising database #{index+1}..."
@@ -26,19 +63,23 @@ class Nitra
         system("bundle exec rake db:migrate")
       end
     end
+  end
 
+  def load_rails_environment
     puts "loading rails environment..." if debug
 
     ENV["TEST_ENV_NUMBER"] = "1"
 
     require 'spec/spec_helper'
-    require 'stringio'
 
     ActiveRecord::Base.connection.disconnect!
+  end
 
-    pipes = (0...process_count).collect do |index|
+  def fork_workers
+    (0...process_count).collect do |index|
       server_sender_pipe = IO.pipe
       client_sender_pipe = IO.pipe
+
       fork do
         trap("SIGTERM") { Process.kill("SIGKILL", Process.pid) }
         trap("SIGINT") { Process.kill("SIGKILL", Process.pid) }
@@ -74,19 +115,14 @@ class Nitra
           io.string = ""
         end
       end
+
       server_sender_pipe[0].close
       client_sender_pipe[1].close
       [client_sender_pipe[0], server_sender_pipe[1]]
     end
+  end
 
-    readers = pipes.collect(&:first)
-    files = Dir["spec/**/*_spec.rb"]
-
-    return if files.empty?
-
-    trap("SIGTERM") { $aborted = true }
-    trap("SIGINT") { $aborted = true }
-
+  def hand_out_files_to_workers(files, pipes)
     puts "Running rspec on #{files.length} files spread across #{process_count} processes\n\n"
 
     @columns = (ENV['COLUMNS'] || 120).to_i
@@ -97,6 +133,7 @@ class Nitra
 
     result = ""
     worst_return_code = 0
+    readers = pipes.collect(&:first)
 
     while !$aborted && readers.length > 0
       print_progress
@@ -134,23 +171,6 @@ class Nitra
     print_progress
     puts ""
 
-    trap("SIGTERM", "DEFAULT")
-    trap("SIGINT", "DEFAULT")
-
-    result = result.gsub(/\n\n\n+/, "\n\n")
-    puts result
-    puts "\nAborted by signal" if $aborted
-    puts "\nFinished in #{"%0.1f" % (Time.now-start_time)} seconds"
-
-    $aborted ? 255 : worst_return_code
-  end
-
-  protected
-  def print_progress
-    bar_length = @columns - 50
-    progress = @files_completed / @file_count.to_f
-    length_completed = (progress * bar_length).to_i
-    length_to_go = bar_length - length_completed
-    print "[#{"X" * length_completed}#{"." * length_to_go}] #{@files_completed}/#{@file_count} (#{"%0.1f%%" % (progress*100)}) * #{@example_count} examples, #{@failure_count} failures\r"
+    result
   end
 end
