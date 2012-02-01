@@ -15,7 +15,7 @@ class Nitra
       process_count.times do |index|
         puts "initialising database #{index+1}..."
         ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
-        system("bundle exec rake db:schema:load")
+        system("bundle exec rake db:drop db:create db:schema:load")
       end
     end
 
@@ -36,12 +36,13 @@ class Nitra
 
     ActiveRecord::Base.connection.disconnect!
 
-    trap("SIGINT") { Process.kill("SIGKILL", Process.pid) }
-
     pipes = (0...process_count).collect do |index|
       server_sender_pipe = IO.pipe
       client_sender_pipe = IO.pipe
       fork do
+        trap("SIGTERM") { Process.kill("SIGKILL", Process.pid) }
+        trap("SIGINT") { Process.kill("SIGKILL", Process.pid) }
+
         server_sender_pipe[1].close
         client_sender_pipe[0].close
         rd = server_sender_pipe[0]
@@ -83,6 +84,9 @@ class Nitra
 
     return if files.empty?
 
+    trap("SIGTERM") { $aborted = true }
+    trap("SIGINT") { $aborted = true }
+
     puts "Running rspec on #{files.length} files spread across #{process_count} processes\n\n"
 
     @columns = (ENV['COLUMNS'] || 120).to_i
@@ -94,17 +98,15 @@ class Nitra
     result = ""
     worst_return_code = 0
 
-    while readers.length > 0
+    while !$aborted && readers.length > 0
       print_progress
       fds = IO.select(readers)
       fds.first.each do |fd|
-        return_code, length = fd.gets.split(",")
-
+        break unless value = fd.gets
+        return_code, length = value.split(",")
         worst_return_code = return_code.to_i if worst_return_code < return_code.to_i
 
-        if length.nil?
-          break
-        elsif length.to_i > 0
+        if length.to_i > 0
           data = fd.read(length.to_i)
 
           @files_completed += 1
@@ -131,11 +133,16 @@ class Nitra
 
     print_progress
     puts ""
+
+    trap("SIGTERM", "DEFAULT")
+    trap("SIGINT", "DEFAULT")
+
     result = result.gsub(/\n\n\n+/, "\n\n")
     puts result
+    puts "\nAborted by signal" if $aborted
     puts "\nFinished in #{"%0.1f" % (Time.now-start_time)} seconds"
 
-    worst_return_code
+    $aborted ? 255 : worst_return_code
   end
 
   protected
