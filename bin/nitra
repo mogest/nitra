@@ -6,7 +6,7 @@ require 'optparse'
 nitra = Nitra.new
 
 OptionParser.new do |opts|
-  opts.banner = "Usage: nitra [options]"
+  opts.banner = "Usage: nitra [options] [spec_filename [...]]"
 
   opts.on("-c", "--cpus NUMBER", Integer, "Specify the number of CPUs to use, defaults to 4") do |n|
     nitra.process_count = n
@@ -24,6 +24,10 @@ OptionParser.new do |opts|
     nitra.migrate = true
   end
 
+  opts.on("-q", "--quiet", "Quiet; don't display progress bar") do
+    nitra.quiet = true
+  end
+
   opts.on("--debug", "Print debug output") do
     nitra.debug = true
   end
@@ -33,5 +37,7 @@ OptionParser.new do |opts|
     exit
   end
 end.parse!
+
+nitra.files = ARGV
 
 exit nitra.run

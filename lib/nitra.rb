@@ -1,7 +1,8 @@
 require 'stringio'
 
 class Nitra
-  attr_accessor :load_schema, :migrate, :debug
+  attr_accessor :load_schema, :migrate, :debug, :quiet
+  attr_accessor :files
   attr_accessor :process_count, :environment
 
   def initialize
@@ -19,38 +20,39 @@ class Nitra
 
     pipes = fork_workers
 
-    files = Dir["spec/**/*_spec.rb"]
+    self.files = Dir["spec/**/*_spec.rb"] if files.nil? || files.empty?
     return if files.empty?
 
     trap("SIGTERM") { $aborted = true }
     trap("SIGINT") { $aborted = true }
 
-    result = hand_out_files_to_workers(files, pipes)
+    return_code, result = hand_out_files_to_workers(files, pipes)
 
     trap("SIGTERM", "DEFAULT")
     trap("SIGINT", "DEFAULT")
 
     result = result.gsub(/\n\n\n+/, "\n\n")
     puts result
-    puts "\nAborted by signal" if $aborted
-    puts "\nFinished in #{"%0.1f" % (Time.now-start_time)} seconds"
+    puts "\n#{$aborted ? "Aborted after" : "Finished in"} #{"%0.1f" % (Time.now-start_time)} seconds" unless quiet
 
-    $aborted ? 255 : worst_return_code
+    $aborted ? 255 : return_code
   end
 
   protected
   def print_progress
-    bar_length = @columns - 50
-    progress = @files_completed / @file_count.to_f
-    length_completed = (progress * bar_length).to_i
-    length_to_go = bar_length - length_completed
-    print "[#{"X" * length_completed}#{"." * length_to_go}] #{@files_completed}/#{@file_count} (#{"%0.1f%%" % (progress*100)}) * #{@example_count} examples, #{@failure_count} failures\r"
+    unless quiet
+      bar_length = @columns - 50
+      progress = @files_completed / @file_count.to_f
+      length_completed = (progress * bar_length).to_i
+      length_to_go = bar_length - length_completed
+      print "[#{"X" * length_completed}#{"." * length_to_go}] #{@files_completed}/#{@file_count} (#{"%0.1f%%" % (progress*100)}) * #{@example_count} examples, #{@failure_count} failures\r"
+    end
   end
 
   def initialise_database
     if load_schema
       process_count.times do |index|
-        puts "initialising database #{index+1}..."
+        puts "initialising database #{index+1}..." unless quiet
         ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
         system("bundle exec rake db:drop db:create db:schema:load")
       end
@@ -58,7 +60,7 @@ class Nitra
 
     if migrate
       process_count.times do |index|
-        puts "migrating database #{index+1}..."
+        puts "migrating database #{index+1}..." unless quiet
         ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
         system("bundle exec rake db:migrate")
       end
@@ -106,7 +108,12 @@ class Nitra
           filename = filename.chomp
           puts "#{index} starting to process #{filename}" if debug
 
-          result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
+          begin
+            result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
+          rescue LoadError
+            io << "\nCould not load file #{filename}\n\n"
+            result = 1
+          end
           RSpec.reset
 
           puts "#{index} #{filename} processed" if debug
@@ -123,7 +130,7 @@ class Nitra
   end
 
   def hand_out_files_to_workers(files, pipes)
-    puts "Running rspec on #{files.length} files spread across #{process_count} processes\n\n"
+    puts "Running rspec on #{files.length} files spread across #{process_count} processes\n\n" unless quiet
 
     @columns = (ENV['COLUMNS'] || 120).to_i
     @file_count = files.length
@@ -139,7 +146,17 @@ class Nitra
       print_progress
       fds = IO.select(readers)
       fds.first.each do |fd|
-        break unless value = fd.gets
+        unless value = fd.gets
+          readers.delete(fd)
+          worst_return_code = 255
+          if readers.empty?
+            puts "Worker unexpectedly died.  No more workers to run specs - dying."
+          else
+            puts "Worker unexpectedly died.  Trying to continue with fewer workers."
+          end
+          break
+        end
+
         return_code, length = value.split(",")
         worst_return_code = return_code.to_i if worst_return_code < return_code.to_i
 
@@ -152,7 +169,7 @@ class Nitra
             @failure_count += m[2].to_i
           end
 
-          result << data.gsub(/^[.FP]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
+          result << data.gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
         else
           puts "ZERO LENGTH" if debug
         end
@@ -169,8 +186,8 @@ class Nitra
     end
 
     print_progress
-    puts ""
+    puts "" unless quiet
 
-    result
+    [worst_return_code, result]
   end
 end
