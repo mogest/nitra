@@ -28,6 +28,10 @@ OptionParser.new do |opts|
     nitra.quiet = true
   end
 
+  opts.on("-p", "--print-failures", "Print failures immediately when they occur") do
+    nitra.print_failures = true
+  end
+
   opts.on("--debug", "Print debug output") do
     nitra.debug = true
   end
