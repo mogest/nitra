@@ -1,7 +1,7 @@
 require 'stringio'
 
 class Nitra
-  attr_accessor :load_schema, :migrate, :debug, :quiet
+  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures
   attr_accessor :files
   attr_accessor :process_count, :environment
 
@@ -31,14 +31,17 @@ class Nitra
     trap("SIGTERM", "DEFAULT")
     trap("SIGINT", "DEFAULT")
 
-    result = result.gsub(/\n\n\n+/, "\n\n")
-    puts result
+    print_result(result)
     puts "\n#{$aborted ? "Aborted after" : "Finished in"} #{"%0.1f" % (Time.now-start_time)} seconds" unless quiet
 
     $aborted ? 255 : return_code
   end
 
   protected
+  def print_result(result)
+    puts result.gsub(/\n\n\n+/, "\n\n")
+  end
+
   def print_progress
     unless quiet
       bar_length = @columns - 50
@@ -164,12 +167,21 @@ class Nitra
           data = fd.read(length.to_i)
 
           @files_completed += 1
+          failure_count = 0
+
           if m = data.match(/(\d+) examples?, (\d+) failure/)
             @example_count += m[1].to_i
-            @failure_count += m[2].to_i
+            failure_count += m[2].to_i
           end
 
-          result << data.gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
+          @failure_count += failure_count
+          stripped_data = data.gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
+
+          if print_failures && failure_count > 0
+            print_result(stripped_data)
+          else
+            result << stripped_data
+          end
         else
           puts "ZERO LENGTH" if debug
         end
