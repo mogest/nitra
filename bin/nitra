@@ -32,6 +32,10 @@ OptionParser.new do |opts|
     nitra.print_failures = true
   end
 
+  opts.on("--compact", "Compact output") do
+    nitra.compact = true
+  end
+
   opts.on("--debug", "Print debug output") do
     nitra.debug = true
   end
