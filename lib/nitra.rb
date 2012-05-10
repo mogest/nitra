@@ -53,20 +53,26 @@ class Nitra
   end
 
   def initialise_database
+    database_pids = []
+
     if load_schema
-      process_count.times do |index|
+      database_pids += process_count.times.map do |index|
         puts "initialising database #{index+1}..." unless quiet
         ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
-        system("bundle exec rake db:drop db:create db:schema:load")
+        fork { exec("bundle exec rake db:drop db:create db:schema:load") }
       end
     end
 
     if migrate
-      process_count.times do |index|
+      database_pids += process_count.times.map do |index|
         puts "migrating database #{index+1}..." unless quiet
         ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
-        system("bundle exec rake db:migrate")
+        fork { exec("bundle exec rake db:migrate") }
       end
+    end
+
+    database_pids.each do |pid|
+      Process.wait(pid)
     end
   end
 
