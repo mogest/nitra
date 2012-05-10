@@ -1,7 +1,7 @@
 require 'stringio'
 
 class Nitra
-  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures
+  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures, :compact
   attr_accessor :files
   attr_accessor :process_count, :environment
 
@@ -48,7 +48,12 @@ class Nitra
       progress = @files_completed / @file_count.to_f
       length_completed = (progress * bar_length).to_i
       length_to_go = bar_length - length_completed
-      print "[#{"X" * length_completed}#{"." * length_to_go}] #{@files_completed}/#{@file_count} (#{"%0.1f%%" % (progress*100)}) * #{@example_count} examples, #{@failure_count} failures\r"
+
+      if compact
+        print "\r  #{@files_completed}/#{@file_count} (#{"%0.1f%%" % (progress*100)}) * #{@example_count} examples, #{@failure_count} failures\r"
+      else
+        print "[#{"X" * length_completed}#{"." * length_to_go}] #{@files_completed}/#{@file_count} (#{"%0.1f%%" % (progress*100)}) * #{@example_count} examples, #{@failure_count} failures\r"
+      end
     end
   end
 
@@ -198,7 +203,7 @@ class Nitra
     end
 
     print_progress
-    puts "" unless quiet
+    puts "" unless quiet || compact
 
     [worst_return_code, result]
   end
