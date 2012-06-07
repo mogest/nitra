@@ -1,6 +1,6 @@
 spec = Gem::Specification.new do |s|
   s.name = 'nitra'
-  s.version = '0.9.2'
+  s.version = '0.9.3'
   s.summary = "Multi-process rspec runner"
   s.description = "Multi-process rspec runner"
   s.files = %w(README lib/nitra.rb bin/nitra)

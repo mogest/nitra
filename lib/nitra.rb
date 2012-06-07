@@ -1,13 +1,15 @@
 require 'stringio'
+require 'tempfile'
 
 class Nitra
-  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures
+  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures, :fork_for_each_file
   attr_accessor :files
   attr_accessor :process_count, :environment
 
   def initialize
     self.process_count = 4
     self.environment = "nitra"
+    self.fork_for_each_file = true
   end
 
   def run
@@ -96,14 +98,38 @@ class Nitra
 
         ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
 
+        # Find the database config for this TEST_ENV_NUMBER and manually initialise a connection.
         database_config = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)[ENV["RAILS_ENV"]]
         ActiveRecord::Base.establish_connection(database_config)
         Rails.cache.reset if Rails.cache.respond_to?(:reset)
 
+        # RSpec doesn't like it when you change the IO between invocations.  So we make one object and flush it
+        # after every invocation.
+        io = StringIO.new
+
+        # When rspec processes the first spec file, it does initialisation like loading in fixtures into the
+        # database.  If we're forking for each file, we need to initialise first so it doesn't try to initialise
+        # for every single file.
+        if fork_for_each_file
+          puts "running empty spec to make rspec run its initialisation" if debug
+          file = Tempfile.new("nitra")
+          begin
+            file.write("require 'spec_helper'; describe('nitra preloading') { it('preloads the fixtures') { 1.should == 1 } }\n")
+            file.close
+            RSpec::Core::CommandLine.new(["-f", "p", file.path]).run(io, io)
+          ensure
+            file.close unless file.closed?
+            file.unlink
+          end
+          RSpec.reset
+          io.string = ""
+        end
+
+        # OK, we're good to receive requests.  Tell our master.
         puts "announcing availability" if debug
         wr.write("0,0\n")
 
-        io = StringIO.new
+        # Loop until our master tells us we're finished.
         loop do
           puts "#{index} waiting for next job" if debug
           filename = rd.gets
@@ -111,18 +137,27 @@ class Nitra
           filename = filename.chomp
           puts "#{index} starting to process #{filename}" if debug
 
-          begin
-            result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
-          rescue LoadError
-            io << "\nCould not load file #{filename}\n\n"
-            result = 1
+          perform_rspec_for_filename = lambda do
+            begin
+              result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
+            rescue LoadError
+              io << "\nCould not load file #{filename}\n\n"
+              result = 1
+            end
+
+            wr.write("#{result.to_i},#{io.string.length}\n#{io.string}")
           end
-          RSpec.reset
+
+          if fork_for_each_file
+            pid = fork(&perform_rspec_for_filename)
+            Process.wait(pid) if pid
+          else
+            perform_rspec_for_filename.call
+            io.string = ""
+            RSpec.reset
+          end
 
           puts "#{index} #{filename} processed" if debug
-
-          wr.write("#{result.to_i},#{io.string.length}\n#{io.string}")
-          io.string = ""
         end
       end
 
