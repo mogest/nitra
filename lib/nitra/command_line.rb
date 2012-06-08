@@ -9,8 +9,8 @@ class Nitra::CommandLine
     OptionParser.new(argv) do |opts|
       opts.banner = "Usage: nitra [options] [spec_filename [...]]"
 
-      opts.on("-c", "--cpus NUMBER", Integer, "Specify the number of CPUs to use, defaults to 4") do |n|
-        configuration.process_count = n
+      opts.on("-c", "--cpus NUMBER", Integer, "Specify the number of CPUs to use on the host, or if specified after a --slave, on the slave") do |n|
+        configuration.set_process_count n
       end
 
       opts.on("-e", "--environment STRING", String, "The Rails environment to use, defaults to 'nitra'") do |environment|
@@ -31,6 +31,14 @@ class Nitra::CommandLine
 
       opts.on("-p", "--print-failures", "Print failures immediately when they occur") do
         configuration.print_failures = true
+      end
+
+      opts.on("--slave CONNECTION_COMMAND", String, "Provide a command that executes \"nitra --slave-mode\" on another host") do |connection_command|
+        configuration.slaves << {:command => connection_command, :cpus => nil}
+      end
+
+      opts.on("--slave-mode", "Run in slave mode; ignores all other command-line options") do
+        configuration.slave_mode = true
       end
 
       opts.on("--debug", "Print debug output") do

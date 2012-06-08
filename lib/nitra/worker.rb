@@ -50,7 +50,10 @@ class Nitra::Worker
       begin
         file.write("require 'spec_helper'; describe('nitra preloading') { it('preloads the fixtures') { 1.should == 1 } }\n")
         file.close
-        RSpec::Core::CommandLine.new(["-f", "p", file.path]).run(io, io)
+        output = Nitra::Utils.capture_output do
+          RSpec::Core::CommandLine.new(["-f", "p", file.path]).run(io, io)
+        end
+        channel.write("command" => "stdout", "process" => "init rspec", "text" => output) unless output.empty?
       ensure
         file.close unless file.closed?
         file.unlink
@@ -103,12 +106,14 @@ class Nitra::Worker
         end
         rd.close
         Process.wait(pid) if pid
-        channel.write("command" => "stdout", "process" => "rspec", "filename" => filename, "text" => stdout_buffer)
       else
-        perform_rspec_for_filename.call
+        stdout_buffer = Nitra::Utils.capture_output do
+          perform_rspec_for_filename.call
+        end
         io.string = ""
         RSpec.reset
       end
+      channel.write("command" => "stdout", "process" => "rspec", "filename" => filename, "text" => stdout_buffer) unless stdout_buffer.empty?
 
       debug "#{filename} processed"
     end

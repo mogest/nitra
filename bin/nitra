@@ -4,4 +4,8 @@ require 'nitra'
 
 configuration = Nitra::Configuration.new
 Nitra::CommandLine.new(configuration, ARGV)
-exit Nitra::Client.new(configuration, ARGV).run ? 0 : 1
+if configuration.slave_mode
+  Nitra::Slave::Server.new.run
+else
+  exit Nitra::Client.new(configuration, ARGV).run ? 0 : 1
+end

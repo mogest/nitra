@@ -7,6 +7,9 @@ class Nitra::Runner
     @configuration = configuration
     @server_channel = server_channel
     @runner_id = runner_id
+
+    configuration.calculate_default_process_count
+    server_channel.raise_epipe_on_write_error = true
   end
 
   def run
@@ -22,7 +25,8 @@ class Nitra::Runner
     trap("SIGINT") { $aborted = true }
 
     hand_out_files_to_workers(pipes)
-
+  rescue Errno::EPIPE
+  ensure
     trap("SIGTERM", "DEFAULT")
     trap("SIGINT", "DEFAULT")
   end
@@ -53,17 +57,11 @@ class Nitra::Runner
 
     ENV["TEST_ENV_NUMBER"] = "1"
 
-    old_stdout = $stdout
-    old_stderr = $stderr
-    $stdout = $stderr = io = StringIO.new
-    begin
+    output = Nitra::Utils.capture_output do
       require 'spec/spec_helper'
-    ensure
-      $stdout = old_stdout
-      $stderr = old_stderr
     end
 
-    server_channel.write("command" => "stdout", "process" => "rails initialisation", "text" => io.string)
+    server_channel.write("command" => "stdout", "process" => "rails initialisation", "text" => output)
 
     ActiveRecord::Base.connection.disconnect!
   end
@@ -122,8 +120,8 @@ class Nitra::Runner
 
   def debug(*text)
     server_channel.write(
-      :command => "debug",
-      :text => "runner #{runner_id}: #{text.join}"
+      "command" => "debug",
+      "text" => "runner #{runner_id}: #{text.join}"
     ) if configuration.debug
   end
 end

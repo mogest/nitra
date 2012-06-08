@@ -1,7 +1,10 @@
+require 'yaml'
+
 class Nitra::Channel
   ProtocolInvalidError = Class.new(StandardError)
 
   attr_reader :rd, :wr
+  attr_accessor :raise_epipe_on_write_error
 
   def initialize(rd, wr)
     @rd = rd
@@ -30,14 +33,16 @@ class Nitra::Channel
     return unless line = rd.gets
     if result = line.strip.match(/\ANITRA,(\d+)\z/)
       data = rd.read(result[1].to_i)
-      Marshal.load(data)
+      YAML.load(data)
     else
-      raise ProtocolInvalidError, "Expected nitra length line, got #{line}"
+      raise ProtocolInvalidError, "Expected nitra length line, got #{line.inspect}"
     end
   end
 
   def write(data)
-    encoded = Marshal.dump(data)
+    encoded = YAML.dump(data)
     wr.write("NITRA,#{encoded.length}\n#{encoded}")
+  rescue Errno::EPIPE
+    raise if raise_epipe_on_write_error
   end
 end

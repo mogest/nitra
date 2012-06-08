@@ -13,6 +13,11 @@ class Nitra::Client
     master = Nitra::Master.new(configuration, files)
     progress = master.run do |progress, data|
       print_progress(progress)
+      if data && configuration.print_failures && data["failure_count"] != 0
+        puts unless configuration.quiet
+        puts "=== output for #{data["filename"]} #{'='*40}"
+        puts data["text"].gsub(/\n\n\n+/, "\n\n")
+      end
     end
 
     puts progress.output.gsub(/\n\n\n+/, "\n\n")

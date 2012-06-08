@@ -14,16 +14,20 @@ class Nitra::Master
     progress.file_count = @files.length
     yield progress, nil
 
-    client, runner = Nitra::Channel.pipe
-    fork do
-      runner.close
-      Nitra::Runner.new(configuration, client, "A").run
+    runners = []
+
+    if configuration.process_count > 0
+      client, runner = Nitra::Channel.pipe
+      fork do
+        runner.close
+        Nitra::Runner.new(configuration, client, "A").run
+      end
+      client.close
+      runners << runner
     end
-    client.close
 
-    # TODO : open Nitra::Runner on other machines
-
-    runners = [runner]
+    slave = Nitra::Slave::Client.new(configuration)
+    runners += slave.connect("")
 
     while runners.length > 0
       Nitra::Channel.read_select(runners).each do |channel|
@@ -33,14 +37,18 @@ class Nitra::Master
             channel.write "filename" => files.shift
           when "result"
             progress.files_completed += 1
-            progress.example_count += data["example_count"]
-            progress.failure_count += data["failure_count"]
+            progress.example_count += data["example_count"] || 0
+            progress.failure_count += data["failure_count"] || 0
             progress.output << data["text"]
             yield progress, data
           when "debug"
-            puts "[DEBUG] #{data["text"]}"
+            if configuration.debug
+              puts "[DEBUG] #{data["text"]}"
+            end
           when "stdout"
-            puts "STDOUT for #{data["process"]} #{data["filename"]}:\n#{data["text"]}" unless data["text"].empty?
+            if configuration.debug
+              puts "STDOUT for #{data["process"]} #{data["filename"]}:\n#{data["text"]}" unless data["text"].empty?
+            end
           end
         else
           runners.delete channel
@@ -48,8 +56,8 @@ class Nitra::Master
       end
     end
 
-    debug "waiting for runner children to exit..."
-    Process.wait
+    debug "waiting for all children to exit..."
+    Process.waitall
     progress
   end
 
