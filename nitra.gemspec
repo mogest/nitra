@@ -1,9 +1,9 @@
 spec = Gem::Specification.new do |s|
   s.name = 'nitra'
-  s.version = '0.9.3'
+  s.version = '0.9.4'
   s.summary = "Multi-process rspec runner"
   s.description = "Multi-process rspec runner"
-  s.files = %w(README lib/nitra.rb bin/nitra)
+  s.files = %w(README lib/nitra.rb bin/nitra) + Dir['lib/**/*.rb']
   s.executables << "nitra"
   s.has_rdoc = false
   s.author = "Roger Nesbitt"
