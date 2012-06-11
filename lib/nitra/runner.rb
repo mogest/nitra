@@ -53,12 +53,12 @@ class Nitra::Runner
   end
 
   def load_rails_environment
-    debug "loading rails environment..."
+    debug "Loading rails environment..."
 
     ENV["TEST_ENV_NUMBER"] = "1"
 
     output = Nitra::Utils.capture_output do
-      require 'spec/spec_helper'
+      configuration.framework.load_environment
     end
 
     server_channel.write("command" => "stdout", "process" => "rails initialisation", "text" => output)
@@ -77,21 +77,27 @@ class Nitra::Runner
       Nitra::Channel.read_select(pipes).each do |worker_channel|
         unless data = worker_channel.read
           pipes.delete worker_channel
-          debug "worker #{worker_channel} unexpectedly died."
+          debug "Worker #{worker_channel} unexpectedly died."
           next
         end
 
         case data['command']
         when "debug", "stdout"
           server_channel.write(data)
-
         when "result"
+          # Rspec result
           if m = data['text'].match(/(\d+) examples?, (\d+) failure/)
             example_count = m[1].to_i
             failure_count = m[2].to_i
+          # Cucumber result
+          elsif m = data['text'].match(/(\d+) scenarios?.+$/)
+            example_count = m[1].to_i
+            if m = data['text'].match(/\d+ scenarios? \(.*(\d+) [failed|undefined].*\)/)
+              failure_count = m[1].to_i
+            else
+              failure_count = 0
+            end
           end
-
-          stripped_data = data['text'].gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
 
           server_channel.write(
             "command"       => "result",
@@ -99,17 +105,17 @@ class Nitra::Runner
             "return_code"   => data["return_code"],
             "example_count" => example_count,
             "failure_count" => failure_count,
-            "text"          => stripped_data)
+            "text"          => data['text'])
 
         when "ready"
           server_channel.write("command" => "next")
           next_file = server_channel.read.fetch("filename")
 
           if next_file
-            debug "sending #{next_file} to channel #{worker_channel}"
+            debug "Sending #{next_file} to channel #{worker_channel}"
             worker_channel.write "command" => "process", "filename" => next_file
           else
-            debug "sending close message to channel #{worker_channel}"
+            debug "Sending close message to channel #{worker_channel}"
             worker_channel.write "command" => "close"
             pipes.delete worker_channel
           end
@@ -119,9 +125,8 @@ class Nitra::Runner
   end
 
   def debug(*text)
-    server_channel.write(
-      "command" => "debug",
-      "text" => "runner #{runner_id}: #{text.join}"
-    ) if configuration.debug
+    if configuration.debug
+      server_channel.write("command" => "debug", "text" => "runner #{runner_id}: #{text.join}")
+    end
   end
 end

@@ -7,7 +7,7 @@ class Nitra::Master
   end
 
   def run
-    @files = Dir["spec/**/*_spec.rb"] if files.nil? || files.empty?
+    @files = configuration.framework.files if files.nil? || files.empty?
     return if files.empty?
 
     progress = Nitra::Progress.new
@@ -39,7 +39,7 @@ class Nitra::Master
             progress.files_completed += 1
             progress.example_count += data["example_count"] || 0
             progress.failure_count += data["failure_count"] || 0
-            progress.output << data["text"]
+            progress.output << data["text"] if data["return_code"] == 1
             yield progress, data
           when "debug"
             if configuration.debug
