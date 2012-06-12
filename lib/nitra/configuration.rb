@@ -6,6 +6,7 @@ class Nitra::Configuration
     self.environment = "nitra"
     self.fork_for_each_file = true
     self.slaves = []
+    calculate_default_process_count
   end
 
   def calculate_default_process_count
