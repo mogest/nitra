@@ -16,7 +16,7 @@ module Cucumber
     # Cucumber lacks a reset hook like the one Rspec has so we need to patch one in...
     # Call this after configure so that the correct configuration is used to create the result set.
     def reset
-      @results = Results.new(@configuration)
+      @results = Results.new(nil)
     end
   end
 end

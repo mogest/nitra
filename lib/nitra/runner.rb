@@ -1,12 +1,13 @@
 require 'stringio'
 
 class Nitra::Runner
-  attr_reader :configuration, :server_channel, :runner_id
+  attr_reader :configuration, :server_channel, :runner_id, :framework
 
   def initialize(configuration, server_channel, runner_id)
     @configuration = configuration
     @server_channel = server_channel
     @runner_id = runner_id
+    @framework = configuration.framework_shim
 
     configuration.calculate_default_process_count
     server_channel.raise_epipe_on_write_error = true
@@ -58,7 +59,7 @@ class Nitra::Runner
     ENV["TEST_ENV_NUMBER"] = "1"
 
     output = Nitra::Utils.capture_output do
-      configuration.framework.load_environment
+      framework.load_environment
     end
 
     server_channel.write("command" => "stdout", "process" => "rails initialisation", "text" => output)
@@ -84,6 +85,7 @@ class Nitra::Runner
         case data['command']
         when "debug", "stdout"
           server_channel.write(data)
+
         when "result"
           # Rspec result
           if m = data['text'].match(/(\d+) examples?, (\d+) failure/)
@@ -99,13 +101,15 @@ class Nitra::Runner
             end
           end
 
+          stripped_data = data['text'].gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
+
           server_channel.write(
             "command"       => "result",
             "filename"      => data["filename"],
             "return_code"   => data["return_code"],
             "example_count" => example_count,
             "failure_count" => failure_count,
-            "text"          => data['text'])
+            "text"          => stripped_data)
 
         when "ready"
           server_channel.write("command" => "next")

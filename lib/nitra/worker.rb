@@ -2,13 +2,13 @@ require 'stringio'
 require 'tempfile'
 
 class Nitra::Worker
-  attr_reader :runner_id, :worker_number, :configuration, :channel, :io
+  attr_reader :runner_id, :worker_number, :configuration, :channel, :io, :framework
 
   def initialize(runner_id, worker_number, configuration)
     @runner_id = runner_id
     @worker_number = worker_number
     @configuration = configuration
-    @first_file_has_been_run = false
+    @framework = configuration.framework_shim
 
     ENV["TEST_ENV_NUMBER"] = (worker_number + 1).to_s
 
@@ -39,6 +39,8 @@ class Nitra::Worker
 
     connect_to_database
 
+    preload_framework
+
     # Loop until our runner passes us a message from the master to tells us we're finished.
     loop do
       debug "Announcing availability"
@@ -56,6 +58,28 @@ class Nitra::Worker
       debug "Starting to process #{filename}"
       process_file(filename)
       debug "#{filename} processed"
+    end
+  end
+
+  def preload_framework
+    debug "running empty spec/feature to make framework run its initialisation"
+    file = Tempfile.new("nitra")
+    begin
+      file.write(@framework.minimal_file)
+      file.close
+      output = Nitra::Utils.capture_output do
+        run_file(file.path, true)
+      end
+      channel.write("command" => "stdout", "process" => "init framework", "text" => output) unless output.empty?
+    ensure
+      file.close unless file.closed?
+      file.unlink
+      if @configuration.framework == :cucumber
+        @cuke_runtime.reset
+      else
+        RSpec.reset
+      end
+      io.string = ""
     end
   end
 
@@ -85,48 +109,9 @@ class Nitra::Worker
   # Subsequent files fork.
   # 2)There's two sets of data we're interested in, the output from the test framework, and any other output.
   # We capture the framework's output in the @io object and send that up to the runner in a results message.
-  # Anything else we capture off the stdout/stderr in a buffer and fire off in the stdout message.
+  # Anything else we capture off the stdout/stderr using Nitra::Utils and fire off in the stdout message.
   #
   def process_file(filename)
-    stdout_buffer = ""
-    if @first_file_has_been_run
-      stdout_buffer << run_file_with_fork(filename)
-    else
-      stdout_buffer << run_file_without_fork(filename)
-      @first_file_has_been_run = true
-    end
-    channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => stdout_buffer) unless stdout_buffer.empty?
-  end
-
-  ##
-  # Runs a file in this process.
-  # Record the standard outputs so we can feed them back to the runner.
-  #
-  def run_file_without_fork(filename)
-    stdout_buffer = StringIO.new
-    $stdout = stdout_buffer
-    $stderr = stdout_buffer
-    if filename =~ /.*\.feature$/
-      run_cucumber_file(filename)
-    else
-      run_rspec_file(filename)
-      RSpec.reset
-    end
-    stdout_buffer.rewind
-    stdout_buffer.read
-  ensure
-    # Clear anything we've recorded using @io
-    io.string = ""
-    # Reset stdout
-    $stderr = STDERR
-    $stdout = STDOUT
-  end
-
-  ##
-  # Runs the file in a forked process.
-  # Records the standard output using a pipe between the processes so we can feed it back to the runner.
-  #
-  def run_file_with_fork(filename)
     rd, wr = IO.pipe
     pid = fork do
       rd.close
@@ -136,59 +121,66 @@ class Nitra::Worker
       Kernel.exit!  # at_exit hooks shouldn't be run, otherwise we don't get any benefit from forking because we gotta reload a whole bunch of shit...
     end
     wr.close
-    stdout_buffer = ""
+    output = ""
     loop do
       IO.select([rd])
       text = rd.read
       break if text.nil? || text.length.zero?
-      stdout_buffer << text
+      output << text
     end
     rd.close
     Process.wait(pid) if pid
-    stdout_buffer
+    channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => output) unless output.empty?
   end
 
-  ##
-  # Picks a method based on filename.
-  # This should be abstracted away as you can only use one framework at a time.
-  #
-  def run_file(filename)
-    if filename =~ /.*\.feature$/
-      run_cucumber_file(filename)
+  def run_file(filename, preload = false)
+    if configuration.framework == :cucumber
+      run_cucumber_file(filename, preload)
     else
-      run_rspec_file(filename)
+      run_rspec_file(filename, preload)
     end
   end
 
   ##
   # Run an rspec file and write the results back to the runner.
   #
-  def run_rspec_file(filename)
+  # Doesn't write back to the runner if we mark the run as preloading.
+  #
+  def run_rspec_file(filename, preloading = false)
     begin
       result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
     rescue LoadError
       io << "\nCould not load file #{filename}\n\n"
       result = 1
     end
-    channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
+    if preloading
+      puts io.string
+    else
+      channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
+    end
   end
 
   ##
   # Run a Cucumber file and write the results back to the runner.
   #
-  def run_cucumber_file(filename)
+  # Doesn't write back to the runner if we mark the run as preloading.
+  #
+  def run_cucumber_file(filename, preloading = false)
     @cuke_runtime ||= Cucumber::ResetableRuntime.new  # This runtime gets reused, this is important as it's the part that loads the steps...
     begin
       result = 1
       cuke_config = Cucumber::Cli::Configuration.new(io, io)
-      cuke_config.parse!(["--no-color", filename])
+      cuke_config.parse!(["--no-color", "--require", "features", filename])
       @cuke_runtime.configure(cuke_config)
-      @cuke_runtime.reset
       @cuke_runtime.run!
       result = 0 unless @cuke_runtime.results.failure?
     rescue LoadError
       io << "\nCould not load file #{filename}\n\n"
     end
-    channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
+    if preloading
+      puts(io.string)
+    else
+      channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
+    end
   end
 end

@@ -5,7 +5,7 @@ class Nitra::CommandLine
 
   def initialize(configuration, argv)
     @configuration = configuration
-    configuration.framework = Nitra::FrameworkShims::Rspec
+    configuration.framework = :rspec
 
     OptionParser.new(argv) do |opts|
       opts.banner = "Usage: nitra [options] [spec_filename [...]]"
@@ -47,7 +47,7 @@ class Nitra::CommandLine
       end
 
       opts.on("--cucumber", "Switch test framework from rspec to cucumber") do
-        configuration.framework = Nitra::FrameworkShims::Cucumber
+        configuration.framework = :cucumber
       end
 
       opts.on_tail("-h", "--help", "Show this message") do

@@ -19,4 +19,8 @@ class Nitra::Configuration
       slaves.last[:cpus] = n
     end
   end
+
+  def framework_shim
+    Nitra::FrameworkShims::SHIMS[framework]
+  end
 end
