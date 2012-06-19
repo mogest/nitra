@@ -1,13 +1,14 @@
 class Nitra::Master
-  attr_reader :configuration, :files
+  attr_reader :configuration, :files, :framework
 
   def initialize(configuration, files = nil)
     @configuration = configuration
+    @framework = configuration.framework_shim
     @files = files
   end
 
   def run
-    @files = configuration.framework.files if files.nil? || files.empty?
+    @files = framework.files if files.nil? || files.empty?
     return if files.empty?
 
     progress = Nitra::Progress.new
