@@ -35,8 +35,7 @@ class Nitra::Worker
     trap("SIGTERM") { Process.kill("SIGKILL", Process.pid) }
     trap("SIGINT") { Process.kill("SIGKILL", Process.pid) }
 
-    debug "Started"
-
+    debug "Started, using TEST_ENV_NUMBER #{ENV['TEST_ENV_NUMBER']}"
     connect_to_database
 
     preload_framework
@@ -98,6 +97,7 @@ class Nitra::Worker
   def connect_to_database
     database_config = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)[ENV["RAILS_ENV"]]
     ActiveRecord::Base.establish_connection(database_config)
+    debug("Connected to database #{database_config["database"]}")
     Rails.cache.reset if Rails.cache.respond_to?(:reset)
   end
 
