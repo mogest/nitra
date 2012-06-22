@@ -75,7 +75,11 @@ class Nitra::Runner
 
   def hand_out_files_to_workers(pipes)
     while !$aborted && pipes.length > 0
-      Nitra::Channel.read_select(pipes).each do |worker_channel|
+      Nitra::Channel.read_select(pipes + [server_channel]).each do |worker_channel|
+
+        # This is our back-channel that lets us know in case the master is dead.
+        kill_process_group if worker_channel == server_channel && server_channel.rd.eof?
+
         unless data = worker_channel.read
           pipes.delete worker_channel
           debug "Worker #{worker_channel} unexpectedly died."
@@ -132,5 +136,14 @@ class Nitra::Runner
     if configuration.debug
       server_channel.write("command" => "debug", "text" => "runner #{runner_id}: #{text.join}")
     end
+  end
+
+  ##
+  # Kill the process group.
+  #
+  def kill_process_group
+    trap("INT"){ sleep 1 }  # Replace our standard handler.
+    Process.kill('INT', -Process.getpgrp)
+    Process.kill('KILL', -Process.getpgrp)
   end
 end
