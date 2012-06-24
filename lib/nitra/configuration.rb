@@ -1,10 +1,9 @@
 class Nitra::Configuration
-  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures, :fork_for_each_file
-  attr_accessor :process_count, :environment, :slaves, :slave_mode
+  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures
+  attr_accessor :process_count, :environment, :slaves, :slave_mode, :framework
 
   def initialize
     self.environment = "nitra"
-    self.fork_for_each_file = true
     self.slaves = []
     calculate_default_process_count
   end
@@ -19,5 +18,9 @@ class Nitra::Configuration
     else
       slaves.last[:cpus] = n
     end
+  end
+
+  def framework_shim
+    Nitra::FrameworkShims::SHIMS[framework]
   end
 end
