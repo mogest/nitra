@@ -1,12 +1,13 @@
 require 'stringio'
 
 class Nitra::Runner
-  attr_reader :configuration, :server_channel, :runner_id
+  attr_reader :configuration, :server_channel, :runner_id, :framework
 
   def initialize(configuration, server_channel, runner_id)
     @configuration = configuration
     @server_channel = server_channel
     @runner_id = runner_id
+    @framework = configuration.framework_shim
 
     configuration.calculate_default_process_count
     server_channel.raise_epipe_on_write_error = true
@@ -53,12 +54,12 @@ class Nitra::Runner
   end
 
   def load_rails_environment
-    debug "loading rails environment..."
+    debug "Loading rails environment..."
 
     ENV["TEST_ENV_NUMBER"] = "1"
 
     output = Nitra::Utils.capture_output do
-      require 'spec/spec_helper'
+      framework.load_environment
     end
 
     server_channel.write("command" => "stdout", "process" => "rails initialisation", "text" => output)
@@ -74,10 +75,14 @@ class Nitra::Runner
 
   def hand_out_files_to_workers(pipes)
     while !$aborted && pipes.length > 0
-      Nitra::Channel.read_select(pipes).each do |worker_channel|
+      Nitra::Channel.read_select(pipes + [server_channel]).each do |worker_channel|
+
+        # This is our back-channel that lets us know in case the master is dead.
+        kill_process_group if worker_channel == server_channel && server_channel.rd.eof?
+
         unless data = worker_channel.read
           pipes.delete worker_channel
-          debug "worker #{worker_channel} unexpectedly died."
+          debug "Worker #{worker_channel} unexpectedly died."
           next
         end
 
@@ -86,9 +91,18 @@ class Nitra::Runner
           server_channel.write(data)
 
         when "result"
+          # Rspec result
           if m = data['text'].match(/(\d+) examples?, (\d+) failure/)
             example_count = m[1].to_i
             failure_count = m[2].to_i
+          # Cucumber result
+          elsif m = data['text'].match(/(\d+) scenarios?.+$/)
+            example_count = m[1].to_i
+            if m = data['text'].match(/\d+ scenarios? \(.*(\d+) [failed|undefined].*\)/)
+              failure_count = m[1].to_i
+            else
+              failure_count = 0
+            end
           end
 
           stripped_data = data['text'].gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
@@ -106,10 +120,10 @@ class Nitra::Runner
           next_file = server_channel.read.fetch("filename")
 
           if next_file
-            debug "sending #{next_file} to channel #{worker_channel}"
+            debug "Sending #{next_file} to channel #{worker_channel}"
             worker_channel.write "command" => "process", "filename" => next_file
           else
-            debug "sending close message to channel #{worker_channel}"
+            debug "Sending close message to channel #{worker_channel}"
             worker_channel.write "command" => "close"
             pipes.delete worker_channel
           end
@@ -119,9 +133,17 @@ class Nitra::Runner
   end
 
   def debug(*text)
-    server_channel.write(
-      "command" => "debug",
-      "text" => "runner #{runner_id}: #{text.join}"
-    ) if configuration.debug
+    if configuration.debug
+      server_channel.write("command" => "debug", "text" => "runner #{runner_id}: #{text.join}")
+    end
+  end
+
+  ##
+  # Kill the process group.
+  #
+  def kill_process_group
+    trap("INT"){ sleep 1 }  # Replace our standard handler.
+    Process.kill('INT', -Process.getpgrp)
+    Process.kill('KILL', -Process.getpgrp)
   end
 end

@@ -2,12 +2,19 @@ require 'stringio'
 require 'tempfile'
 
 class Nitra::Worker
-  attr_reader :runner_id, :worker_number, :configuration, :channel
+  attr_reader :runner_id, :worker_number, :configuration, :channel, :io, :framework
 
   def initialize(runner_id, worker_number, configuration)
     @runner_id = runner_id
     @worker_number = worker_number
     @configuration = configuration
+    @framework = configuration.framework_shim
+
+    ENV["TEST_ENV_NUMBER"] = (worker_number + 1).to_s
+
+    # RSpec doesn't like it when you change the IO between invocations.
+    # So we make one object and flush it after every invocation.
+    @io = StringIO.new
   end
 
   def fork_and_run
@@ -28,101 +35,152 @@ class Nitra::Worker
     trap("SIGTERM") { Process.kill("SIGKILL", Process.pid) }
     trap("SIGINT") { Process.kill("SIGKILL", Process.pid) }
 
-    debug "started"
+    debug "Started, using TEST_ENV_NUMBER #{ENV['TEST_ENV_NUMBER']}"
+    connect_to_database
 
-    ENV["TEST_ENV_NUMBER"] = (worker_number + 1).to_s
+    preload_framework
 
-    # Find the database config for this TEST_ENV_NUMBER and manually initialise a connection.
-    database_config = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)[ENV["RAILS_ENV"]]
-    ActiveRecord::Base.establish_connection(database_config)
-    Rails.cache.reset if Rails.cache.respond_to?(:reset)
-
-    # RSpec doesn't like it when you change the IO between invocations.  So we make one object and flush it
-    # after every invocation.
-    io = StringIO.new
-
-    # When rspec processes the first spec file, it does initialisation like loading in fixtures into the
-    # database.  If we're forking for each file, we need to initialise first so it doesn't try to initialise
-    # for every single file.
-    if configuration.fork_for_each_file
-      debug "running empty spec to make rspec run its initialisation"
-      file = Tempfile.new("nitra")
-      begin
-        file.write("require 'spec_helper'; describe('nitra preloading') { it('preloads the fixtures') { 1.should == 1 } }\n")
-        file.close
-        output = Nitra::Utils.capture_output do
-          RSpec::Core::CommandLine.new(["-f", "p", file.path]).run(io, io)
-        end
-        channel.write("command" => "stdout", "process" => "init rspec", "text" => output) unless output.empty?
-      ensure
-        file.close unless file.closed?
-        file.unlink
-      end
-      RSpec.reset
-      io.string = ""
-    end
-
-    # Loop until our master tells us we're finished.
+    # Loop until our runner passes us a message from the master to tells us we're finished.
     loop do
-      debug "announcing availability"
+      debug "Announcing availability"
       channel.write("command" => "ready")
 
-      debug "waiting for next job"
+      debug "Waiting for next job"
       data = channel.read
       if data.nil? || data["command"] == "close"
-        debug "channel closed, exiting"
+        debug "Channel closed, exiting"
         exit
       end
 
       filename = data.fetch("filename").chomp
-      debug "starting to process #{filename}"
 
-      perform_rspec_for_filename = lambda do
-        begin
-          result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
-        rescue LoadError
-          io << "\nCould not load file #{filename}\n\n"
-          result = 1
-        end
-
-        channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
-      end
-
-      if configuration.fork_for_each_file
-        rd, wr = IO.pipe
-        pid = fork do
-          rd.close
-          $stdout.reopen(wr)
-          $stderr.reopen(wr)
-          perform_rspec_for_filename.call
-        end
-        wr.close
-        stdout_buffer = ""
-        loop do
-          IO.select([rd])
-          text = rd.read
-          break if text.nil? || text.length.zero?
-          stdout_buffer << text
-        end
-        rd.close
-        Process.wait(pid) if pid
-      else
-        stdout_buffer = Nitra::Utils.capture_output do
-          perform_rspec_for_filename.call
-        end
-        io.string = ""
-        RSpec.reset
-      end
-      channel.write("command" => "stdout", "process" => "rspec", "filename" => filename, "text" => stdout_buffer) unless stdout_buffer.empty?
-
+      debug "Starting to process #{filename}"
+      process_file(filename)
       debug "#{filename} processed"
     end
   end
 
+  def preload_framework
+    debug "running empty spec/feature to make framework run its initialisation"
+    file = Tempfile.new("nitra")
+    begin
+      file.write(@framework.minimal_file)
+      file.close
+      output = Nitra::Utils.capture_output do
+        run_file(file.path, true)
+      end
+      channel.write("command" => "stdout", "process" => "init framework", "text" => output) unless output.empty?
+    ensure
+      file.close unless file.closed?
+      file.unlink
+      if @configuration.framework == :cucumber
+        @cuke_runtime.reset
+      else
+        RSpec.reset
+      end
+      io.string = ""
+    end
+  end
+
+  ##
+  # Sends debug data up to the runner.
+  #
   def debug(*text)
-    channel.write(
-      "command" => "debug",
-      "text" => "worker #{runner_id}.#{worker_number}: #{text.join}"
-    ) if configuration.debug
+    if configuration.debug
+      channel.write("command" => "debug", "text" => "worker #{runner_id}.#{worker_number}: #{text.join}")
+    end
+  end
+
+  ##
+  # Find the database config for this TEST_ENV_NUMBER and manually initialise a connection.
+  #
+  def connect_to_database
+    database_config = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)[ENV["RAILS_ENV"]]
+    ActiveRecord::Base.establish_connection(database_config)
+    debug("Connected to database #{database_config["database"]}")
+    Rails.cache.reset if Rails.cache.respond_to?(:reset)
+  end
+
+  ##
+  # Process the file.
+  #
+  # 2 things to note here
+  # 1) The first file is run in this process so that all of the support code is loaded.
+  # Subsequent files fork.
+  # 2)There's two sets of data we're interested in, the output from the test framework, and any other output.
+  # We capture the framework's output in the @io object and send that up to the runner in a results message.
+  # Anything else we capture off the stdout/stderr using Nitra::Utils and fire off in the stdout message.
+  #
+  def process_file(filename)
+    rd, wr = IO.pipe
+    pid = fork do
+      rd.close
+      $stdout.reopen(wr)
+      $stderr.reopen(wr)
+      run_file(filename)
+      Kernel.exit!  # at_exit hooks shouldn't be run, otherwise we don't get any benefit from forking because we gotta reload a whole bunch of shit...
+    end
+    wr.close
+    output = ""
+    loop do
+      IO.select([rd])
+      text = rd.read
+      break if text.nil? || text.length.zero?
+      output << text
+    end
+    rd.close
+    Process.wait(pid) if pid
+    channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => output) unless output.empty?
+  end
+
+  def run_file(filename, preload = false)
+    if configuration.framework == :cucumber
+      run_cucumber_file(filename, preload)
+    else
+      run_rspec_file(filename, preload)
+    end
+  end
+
+  ##
+  # Run an rspec file and write the results back to the runner.
+  #
+  # Doesn't write back to the runner if we mark the run as preloading.
+  #
+  def run_rspec_file(filename, preloading = false)
+    begin
+      result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
+    rescue LoadError
+      io << "\nCould not load file #{filename}\n\n"
+      result = 1
+    end
+    if preloading
+      puts io.string
+    else
+      channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
+    end
+  end
+
+  ##
+  # Run a Cucumber file and write the results back to the runner.
+  #
+  # Doesn't write back to the runner if we mark the run as preloading.
+  #
+  def run_cucumber_file(filename, preloading = false)
+    @cuke_runtime ||= Cucumber::ResetableRuntime.new  # This runtime gets reused, this is important as it's the part that loads the steps...
+    begin
+      result = 1
+      cuke_config = Cucumber::Cli::Configuration.new(io, io)
+      cuke_config.parse!(["--no-color", "--require", "features", filename])
+      @cuke_runtime.configure(cuke_config)
+      @cuke_runtime.run!
+      result = 0 unless @cuke_runtime.results.failure?
+    rescue LoadError
+      io << "\nCould not load file #{filename}\n\n"
+    end
+    if preloading
+      puts(io.string)
+    else
+      channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
+    end
   end
 end
