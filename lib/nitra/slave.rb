@@ -65,6 +65,7 @@ module Nitra::Slave
       @channel.write("command" => "connected")
 
       runner = Nitra::Runner.new(response["configuration"], channel, response["runner_id"])
+
       runner.run
     end
   end
