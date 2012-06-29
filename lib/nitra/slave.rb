@@ -6,17 +6,25 @@ module Nitra::Slave
       @configuration = configuration
     end
 
-    def connect(runner_id_base)
-      runner_id = "#{runner_id_base}A"
-
+    ##
+    # Starts the slave runners.
+    #
+    # We do this in two steps, starts them all and then sends them their configurations.
+    # This extra complexity speeds up the initial startup when working with many slaves.
+    #
+    def connect
+      runner_id = "A"
       @configuration.slaves.collect do |slave_details|
         runner_id = runner_id.succ
-        connect_host(slave_details, runner_id)
+        server = start_host(slave_details, runner_id)
+        [server, slave_details, runner_id]
+      end.collect do |server, slave_details, runner_id|
+        configure_host(server, slave_details, runner_id)
       end.compact
     end
 
     protected
-    def connect_host(slave_details, runner_id)
+    def start_host(slave_details, runner_id)
       client, server = Nitra::Channel.pipe
 
       puts "Starting slave runner #{runner_id} with command '#{slave_details[:command]}'" if configuration.debug
@@ -29,7 +37,10 @@ module Nitra::Slave
         exec slave_details[:command]
       end
       client.close
+      server
+    end
 
+    def configure_host(server, slave_details, runner_id)
       slave_config = configuration.dup
       slave_config.process_count = slave_details.fetch(:cpus)
 
@@ -65,6 +76,7 @@ module Nitra::Slave
       @channel.write("command" => "connected")
 
       runner = Nitra::Runner.new(response["configuration"], channel, response["runner_id"])
+
       runner.run
     end
   end

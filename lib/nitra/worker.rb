@@ -21,6 +21,11 @@ class Nitra::Worker
     client, server = Nitra::Channel.pipe
 
     fork do
+      # This is important. We don't want anything bubbling up to the master that we didn't send there.
+      # We reopen later to get the output from the framework run.
+      $stdout.reopen('/dev/null', 'a')
+      $stderr.reopen('/dev/null', 'a')
+
       server.close
       @channel = client
       run
@@ -102,23 +107,23 @@ class Nitra::Worker
   end
 
   ##
-  # Process the file.
+  # Process the file, forking before hand.
   #
-  # 2 things to note here
-  # 1) The first file is run in this process so that all of the support code is loaded.
-  # Subsequent files fork.
-  # 2)There's two sets of data we're interested in, the output from the test framework, and any other output.
-  # We capture the framework's output in the @io object and send that up to the runner in a results message.
-  # Anything else we capture off the stdout/stderr using Nitra::Utils and fire off in the stdout message.
+  # There's two sets of data we're interested in, the output from the test framework, and any other output.
+  # 1) We capture the framework's output in the @io object and send that up to the runner in a results message.
+  # This happens in the run_x_file methods.
+  # 2) Anything else we capture off the stdout/stderr using the pipe and fire off in the stdout message.
   #
   def process_file(filename)
     rd, wr = IO.pipe
     pid = fork do
-      rd.close
       $stdout.reopen(wr)
       $stderr.reopen(wr)
+      rd.close
       run_file(filename)
-      Kernel.exit!  # at_exit hooks shouldn't be run, otherwise we don't get any benefit from forking because we gotta reload a whole bunch of shit...
+      wr.close
+      # at_exit hooks shouldn't be run, otherwise we don't get any benefit from forking because we gotta reload a whole bunch of shit...
+      Kernel.exit!
     end
     wr.close
     output = ""

@@ -28,7 +28,7 @@ class Nitra::Master
     end
 
     slave = Nitra::Slave::Client.new(configuration)
-    runners += slave.connect("")
+    runners += slave.connect
 
     while runners.length > 0
       Nitra::Channel.read_select(runners).each do |channel|
