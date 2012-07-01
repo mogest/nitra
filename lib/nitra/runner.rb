@@ -1,13 +1,14 @@
 require 'stringio'
 
 class Nitra::Runner
-  attr_reader :configuration, :server_channel, :runner_id, :framework
+  attr_reader :configuration, :server_channel, :runner_id, :framework, :worker_pids
 
   def initialize(configuration, server_channel, runner_id)
     @configuration = configuration
     @server_channel = server_channel
     @runner_id = runner_id
     @framework = configuration.framework_shim
+    @worker_pids = []
 
     configuration.calculate_default_process_count
     server_channel.raise_epipe_on_write_error = true
@@ -69,7 +70,9 @@ class Nitra::Runner
 
   def start_workers
     (0...configuration.process_count).collect do |index|
-      Nitra::Worker.new(runner_id, index, configuration).fork_and_run
+      pid, pipe = Nitra::Worker.new(runner_id, index, configuration).fork_and_run
+      worker_pids << pid
+      pipe
     end
   end
 
@@ -78,7 +81,7 @@ class Nitra::Runner
       Nitra::Channel.read_select(pipes + [server_channel]).each do |worker_channel|
 
         # This is our back-channel that lets us know in case the master is dead.
-        kill_process_group if worker_channel == server_channel && server_channel.rd.eof?
+        kill_workers if worker_channel == server_channel && server_channel.rd.eof?
 
         unless data = worker_channel.read
           pipes.delete worker_channel
@@ -139,11 +142,12 @@ class Nitra::Runner
   end
 
   ##
-  # Kill the process group.
+  # Kill the workers.
   #
-  def kill_process_group
-    trap("INT"){ sleep 1 }  # Replace our standard handler.
-    Process.kill('INT', -Process.getpgrp)
-    Process.kill('KILL', -Process.getpgrp)
+  def kill_workers
+    worker_pids.each {|pid| Process.kill('USR1', pid) }
+    Process.waitall
+  ensure
+    exit(1)
   end
 end

@@ -9,6 +9,7 @@ class Nitra::Worker
     @worker_number = worker_number
     @configuration = configuration
     @framework = configuration.framework_shim
+    @forked_worker = nil
 
     ENV["TEST_ENV_NUMBER"] = (worker_number + 1).to_s
 
@@ -20,11 +21,13 @@ class Nitra::Worker
   def fork_and_run
     client, server = Nitra::Channel.pipe
 
-    fork do
+    pid = fork do
       # This is important. We don't want anything bubbling up to the master that we didn't send there.
       # We reopen later to get the output from the framework run.
       $stdout.reopen('/dev/null', 'a')
       $stderr.reopen('/dev/null', 'a')
+
+      trap("USR1") { interrupt_forked_worker_and_exit }
 
       server.close
       @channel = client
@@ -32,7 +35,8 @@ class Nitra::Worker
     end
 
     client.close
-    server
+
+    [pid, server]
   end
 
   protected
@@ -78,7 +82,7 @@ class Nitra::Worker
     ensure
       file.close unless file.closed?
       file.unlink
-      if @configuration.framework == :cucumber
+      if configuration.framework == :cucumber
         @cuke_runtime.reset
       else
         RSpec.reset
@@ -116,14 +120,14 @@ class Nitra::Worker
   #
   def process_file(filename)
     rd, wr = IO.pipe
-    pid = fork do
+    @forked_worker = fork do
+      trap('USR1'){ exit!(1) }  # at_exit hooks will be run in the parent.
       $stdout.reopen(wr)
       $stderr.reopen(wr)
       rd.close
       run_file(filename)
       wr.close
-      # at_exit hooks shouldn't be run, otherwise we don't get any benefit from forking because we gotta reload a whole bunch of shit...
-      Kernel.exit!
+      Kernel.exit!  # at_exit hooks will be run in the parent.
     end
     wr.close
     output = ""
@@ -134,7 +138,10 @@ class Nitra::Worker
       output << text
     end
     rd.close
-    Process.wait(pid) if pid
+    Process.wait(@forked_worker) if @forked_worker
+
+    @forked_worker = nil
+
     channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => output) unless output.empty?
   end
 
@@ -187,5 +194,12 @@ class Nitra::Worker
     else
       channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
     end
+  end
+
+  def interrupt_forked_worker_and_exit
+    Process.kill('USR1', @forked_worker) if @forked_worker
+    Process.waitall
+  ensure
+    exit(1)
   end
 end
