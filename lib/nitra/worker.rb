@@ -9,7 +9,7 @@ class Nitra::Worker
     @worker_number = worker_number
     @configuration = configuration
     @framework = configuration.framework_shim
-    @forked_worker = nil
+    @forked_worker_pid = nil
 
     ENV["TEST_ENV_NUMBER"] = (worker_number + 1).to_s
 
@@ -120,14 +120,14 @@ class Nitra::Worker
   #
   def process_file(filename)
     rd, wr = IO.pipe
-    @forked_worker = fork do
-      trap('USR1'){ exit!(1) }  # at_exit hooks will be run in the parent.
+    @forked_worker_pid = fork do
+      trap('USR1') { exit! }  # at_exit hooks will be run in the parent.
       $stdout.reopen(wr)
       $stderr.reopen(wr)
       rd.close
       run_file(filename)
       wr.close
-      Kernel.exit!  # at_exit hooks will be run in the parent.
+      exit!  # at_exit hooks will be run in the parent.
     end
     wr.close
     output = ""
@@ -138,9 +138,9 @@ class Nitra::Worker
       output << text
     end
     rd.close
-    Process.wait(@forked_worker) if @forked_worker
+    Process.wait(@forked_worker_pid) if @forked_worker_pid
 
-    @forked_worker = nil
+    @forked_worker_pid = nil
 
     channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => output) unless output.empty?
   end
@@ -197,9 +197,8 @@ class Nitra::Worker
   end
 
   def interrupt_forked_worker_and_exit
-    Process.kill('USR1', @forked_worker) if @forked_worker
+    Process.kill('USR1', @forked_worker_pid) if @forked_worker_pid
     Process.waitall
-  ensure
-    exit(1)
+    exit
   end
 end

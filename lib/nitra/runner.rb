@@ -145,9 +145,8 @@ class Nitra::Runner
   # Kill the workers.
   #
   def kill_workers
-    worker_pids.each {|pid| Process.kill('USR1', pid) }
+    worker_pids.each {|pid| Process.kill('USR1', pid)}
     Process.waitall
-  ensure
-    exit(1)
+    exit
   end
 end
