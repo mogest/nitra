@@ -11,7 +11,7 @@ class Nitra::Worker
     @framework = configuration.framework_shim
     @forked_worker_pid = nil
 
-    ENV["TEST_ENV_NUMBER"] = (worker_number + 1).to_s
+    ENV["TEST_ENV_NUMBER"] = worker_number.to_s
 
     # RSpec doesn't like it when you change the IO between invocations.
     # So we make one object and flush it after every invocation.
@@ -73,6 +73,8 @@ class Nitra::Worker
     debug "running empty spec/feature to make framework run its initialisation"
     file = Tempfile.new("nitra")
     begin
+      framework.load_environment
+
       file.write(@framework.minimal_file)
       file.close
       output = Nitra::Utils.capture_output do
@@ -104,10 +106,28 @@ class Nitra::Worker
   # Find the database config for this TEST_ENV_NUMBER and manually initialise a connection.
   #
   def connect_to_database
+    initialise_database  # Run rake tasks as required by config
+
     database_config = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)[ENV["RAILS_ENV"]]
     ActiveRecord::Base.establish_connection(database_config)
+
     debug("Connected to database #{database_config["database"]}")
     Rails.cache.reset if Rails.cache.respond_to?(:reset)
+  end
+
+  def initialise_database
+    opts = "RAILS_ENV=#{ENV['RAILS_ENV']} TEST_ENV_NUMBER=#{ENV['TEST_ENV_NUMBER']} " if configuration.load_schema || configuration.migrate
+    if configuration.load_schema
+      debug "initialising database #{worker_number} with opts #{opts}..."
+      output = `#{opts} bundle exec rake db:drop db:create db:schema:load 2>&1`
+      channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
+    end
+
+    if configuration.migrate
+      debug "migrating database #{worker_number} with opts #{opts}..."
+      output = `#{opts} bundle exec rake db:migrate 2>&1`
+      channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
+    end
   end
 
   ##

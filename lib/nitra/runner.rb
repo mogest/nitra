@@ -17,8 +17,6 @@ class Nitra::Runner
   def run
     ENV["RAILS_ENV"] = configuration.environment
 
-    initialise_database
-
     load_rails_environment
 
     pipes = start_workers
@@ -34,25 +32,6 @@ class Nitra::Runner
   end
 
   protected
-  def initialise_database
-    if configuration.load_schema
-      configuration.process_count.times do |index|
-        debug "initialising database #{index+1}..."
-        ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
-        output = `bundle exec rake db:drop db:create db:schema:load 2>&1`
-        server_channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
-      end
-    end
-
-    if configuration.migrate
-      configuration.process_count.times do |index|
-        debug "migrating database #{index+1}..."
-        ENV["TEST_ENV_NUMBER"] = (index + 1).to_s
-        output = `bundle exec rake db:migrate 2>&1`
-        server_channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
-      end
-    end
-  end
 
   def load_rails_environment
     debug "Loading rails environment..."
@@ -60,16 +39,15 @@ class Nitra::Runner
     ENV["TEST_ENV_NUMBER"] = "1"
 
     output = Nitra::Utils.capture_output do
-      framework.load_environment
+      require 'config/application'
+      Rails.application.require_environment!
     end
 
     server_channel.write("command" => "stdout", "process" => "rails initialisation", "text" => output)
-
-    ActiveRecord::Base.connection.disconnect!
   end
 
   def start_workers
-    (0...configuration.process_count).collect do |index|
+    (1..configuration.process_count).collect do |index|
       pid, pipe = Nitra::Worker.new(runner_id, index, configuration).fork_and_run
       worker_pids << pid
       pipe

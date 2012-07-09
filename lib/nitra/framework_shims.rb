@@ -2,8 +2,6 @@ class Nitra::FrameworkShims
   module Cucumber
     class << self
       def load_environment
-        require 'config/application'
-        Rails.application.require_environment!
         require 'cucumber'
         require 'nitra/ext/cucumber'
       end
