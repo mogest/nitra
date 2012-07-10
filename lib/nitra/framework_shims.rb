@@ -21,6 +21,7 @@ class Nitra::FrameworkShims
       end
     end
   end
+
   module Rspec
     class << self
       def load_environment

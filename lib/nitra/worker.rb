@@ -116,16 +116,26 @@ class Nitra::Worker
   end
 
   def initialise_database
-    opts = "RAILS_ENV=#{ENV['RAILS_ENV']} TEST_ENV_NUMBER=#{ENV['TEST_ENV_NUMBER']} " if configuration.load_schema || configuration.migrate
+    if configuration.load_schema || configuration.migrate
+      require 'rake'
+      Rake.load_rakefile("Rakefile")
+    end
+
     if configuration.load_schema
-      debug "initialising database #{worker_number} with opts #{opts}..."
-      output = `#{opts} bundle exec rake db:drop db:create db:schema:load 2>&1`
+      debug "initialising database #{worker_number}..."
+      output = Nitra::Utils.capture_output do
+        Rake::Task["db:drop"].invoke
+        Rake::Task["db:create"].invoke
+        Rake::Task["db:schema:load"].invoke
+      end
       channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
     end
 
     if configuration.migrate
-      debug "migrating database #{worker_number} with opts #{opts}..."
-      output = `#{opts} bundle exec rake db:migrate 2>&1`
+      debug "migrating database #{worker_number}..."
+      output = Nitra::Utils.capture_output do
+        Rake::Task["db:migrate"].invoke
+      end
       channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
     end
   end
