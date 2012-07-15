@@ -106,38 +106,15 @@ class Nitra::Worker
   # Find the database config for this TEST_ENV_NUMBER and manually initialise a connection.
   #
   def connect_to_database
-    initialise_database  # Run rake tasks as required by config
 
-    database_config = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)[ENV["RAILS_ENV"]]
-    ActiveRecord::Base.establish_connection(database_config)
+    ## Config files are read at load time. Since we load rails in one env then change some flags to get different
+    ## environments through forking we need always reload our database config...
+    ActiveRecord::Base.configurations = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)
 
-    debug("Connected to database #{database_config["database"]}")
+    ActiveRecord::Base.establish_connection
+    debug("Connected to database #{ActiveRecord::Base.connection.current_database}")
+
     Rails.cache.reset if Rails.cache.respond_to?(:reset)
-  end
-
-  def initialise_database
-    if configuration.load_schema || configuration.migrate
-      require 'rake'
-      Rake.load_rakefile("Rakefile")
-    end
-
-    if configuration.load_schema
-      debug "initialising database #{worker_number}..."
-      output = Nitra::Utils.capture_output do
-        Rake::Task["db:drop"].invoke
-        Rake::Task["db:create"].invoke
-        Rake::Task["db:schema:load"].invoke
-      end
-      channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
-    end
-
-    if configuration.migrate
-      debug "migrating database #{worker_number}..."
-      output = Nitra::Utils.capture_output do
-        Rake::Task["db:migrate"].invoke
-      end
-      channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
-    end
   end
 
   ##

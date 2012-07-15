@@ -17,6 +17,8 @@ class Nitra::Runner
   def run
     ENV["RAILS_ENV"] = configuration.environment
 
+    load_databases
+
     load_rails_environment
 
     pipes = start_workers
@@ -32,6 +34,45 @@ class Nitra::Runner
   end
 
   protected
+
+  def load_databases
+    if configuration.load_schema || configuration.migrate
+      require 'rake'
+      Rake.load_rakefile("Rakefile")
+    end
+
+    if configuration.load_schema
+      (1..configuration.process_count).collect do |index|
+        fork do
+          ENV["TEST_ENV_NUMBER"] = index.to_s
+          debug "initialising database #{ENV["TEST_ENV_NUMBER"]}..."
+          output = Nitra::Utils.capture_output do
+            Rake::Task["db:drop"].invoke
+            Rake::Task["db:create"].invoke
+            Rake::Task["db:schema:load"].invoke
+          end
+          server_channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
+        end
+      end
+    end
+
+    Process.waitall
+
+    if configuration.migrate
+      (1..configuration.process_count).collect do |index|
+        fork do
+          ENV["TEST_ENV_NUMBER"] = index.to_s
+          debug "migrating database #{ENV["TEST_ENV_NUMBER"]}..."
+          output = Nitra::Utils.capture_output do
+            Rake::Task["db:migrate"].invoke
+          end
+          server_channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
+        end
+      end
+    end
+
+    Process.waitall
+  end
 
   def load_rails_environment
     debug "Loading rails environment..."
