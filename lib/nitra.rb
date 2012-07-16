@@ -1,7 +1,6 @@
 module Nitra
 end
 
-require 'nitra/framework_shims'
 require 'nitra/channel'
 require 'nitra/client'
 require 'nitra/command_line'

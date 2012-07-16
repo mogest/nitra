@@ -1,6 +1,6 @@
 class Nitra::Configuration
   attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures
-  attr_accessor :process_count, :environment, :slaves, :slave_mode, :framework
+  attr_accessor :process_count, :environment, :slaves, :slave_mode, :framework, :frameworks
 
   def initialize
     self.environment = "nitra"
@@ -18,9 +18,5 @@ class Nitra::Configuration
     else
       slaves.last[:cpus] = n
     end
-  end
-
-  def framework_shim
-    Nitra::FrameworkShims::SHIMS[framework]
   end
 end
