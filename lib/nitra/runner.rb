@@ -42,36 +42,56 @@ class Nitra::Runner
     end
 
     if configuration.load_schema
+      debug "initialising databases..."
+      rd, wr = IO.pipe
       (1..configuration.process_count).collect do |index|
         fork do
           ENV["TEST_ENV_NUMBER"] = index.to_s
-          debug "initialising database #{ENV["TEST_ENV_NUMBER"]}..."
-          output = Nitra::Utils.capture_output do
-            Rake::Task["db:drop"].invoke
-            Rake::Task["db:create"].invoke
-            Rake::Task["db:schema:load"].invoke
-          end
-          server_channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
+          rd.close
+          $stdout.reopen(wr)
+          $stderr.reopen(wr)
+          Rake::Task["db:drop"].invoke
+          Rake::Task["db:create"].invoke
+          Rake::Task["db:schema:load"].invoke
         end
       end
+      wr.close
+      output = ""
+      loop do
+        IO.select([rd])
+        text = rd.read
+        break if text.nil? || text.length.zero?
+        output << text
+      end
+      rd.close
+      server_channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
+      Process.waitall
     end
-
-    Process.waitall
 
     if configuration.migrate
+      debug "Migrating databases..."
+      rd, wr = IO.pipe
       (1..configuration.process_count).collect do |index|
         fork do
           ENV["TEST_ENV_NUMBER"] = index.to_s
-          debug "migrating database #{ENV["TEST_ENV_NUMBER"]}..."
-          output = Nitra::Utils.capture_output do
-            Rake::Task["db:migrate"].invoke
-          end
-          server_channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
+          rd.close
+          $stdout.reopen(wr)
+          $stderr.reopen(wr)
+          Rake::Task["db:migrate"].invoke
         end
       end
+      wr.close
+      output = ""
+      loop do
+        IO.select([rd])
+        text = rd.read
+        break if text.nil? || text.length.zero?
+        output << text
+      end
+      rd.close
+      server_channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
+      Process.waitall
     end
-
-    Process.waitall
   end
 
   def load_rails_environment
