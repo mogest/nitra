@@ -42,7 +42,7 @@ class Nitra::Runner
     end
 
     if configuration.load_schema
-      debug "initialising databases..."
+      debug "Initializing databases..."
       rd, wr = IO.pipe
       (1..configuration.process_count).collect do |index|
         fork do
@@ -114,7 +114,7 @@ class Nitra::Runner
   end
 
   def start_worker(index)
-    pid, pipe = Nitra::Workers::WORKERS[framework].new(runner_id, index, configuration).fork_and_run
+    pid, pipe = Nitra::Workers::Worker.worker_classes[framework].new(runner_id, index, configuration).fork_and_run
     workers[index] = {:pid => pid, :pipe => pipe}
   end
 

@@ -80,7 +80,7 @@ class Nitra::Master
 
   def map_files_to_frameworks(files)
     @files = files.group_by do |filename|
-     framework_name, framework_class = Nitra::Workers::WORKERS.find {|framework_name, framework_class| framework_class.filename_match?(filename)}
+     framework_name, framework_class = Nitra::Workers::Worker.worker_classes.find {|framework_name, framework_class| framework_class.filename_match?(filename)}
      framework_name
     end
     @frameworks = @files.keys
@@ -88,7 +88,7 @@ class Nitra::Master
 
   def load_files_from_framework_list
     @files = frameworks.inject({}) do |result, framework_name|
-      result[framework_name] = Nitra::Workers::WORKERS[framework_name].files
+      result[framework_name] = Nitra::Workers::Worker.worker_classes[framework_name].files
       result
     end
   end

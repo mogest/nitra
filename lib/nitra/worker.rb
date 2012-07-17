@@ -3,6 +3,27 @@ require 'tempfile'
 
 module Nitra::Workers
   class Worker
+    class << self
+
+      @@worker_classes = {}
+
+      def inherited(klass)
+        @@worker_classes[klass.framework_name] = klass
+      end
+
+      def worker_classes
+        @@worker_classes
+      end
+
+      ##
+      # Return the framework name of this worker
+      #
+      def framework_name
+        self.name.split("::").last.downcase
+      end
+    end
+
+
     attr_reader :runner_id, :worker_number, :configuration, :channel, :io
 
     def initialize(runner_id, worker_number, configuration)
@@ -68,7 +89,7 @@ module Nitra::Workers
       # Loop until our runner passes us a message from the master to tells us we're finished.
       loop do
         debug "Announcing availability"
-        channel.write("command" => "ready", "framework" => framework_name, "worker_number" => worker_number)
+        channel.write("command" => "ready", "framework" => self.class.framework_name, "worker_number" => worker_number)
         debug "Waiting for next job"
         data = channel.read
         if data.nil? || data["command"] == "close"
@@ -154,12 +175,6 @@ module Nitra::Workers
       debug "#{filename} processed"
     end
 
-    ##
-    # Return the framework name of this worker
-    #
-    def framework_name
-      self.class.name.split("::").last.downcase
-    end
 
     ##
     # Interrupts the forked worker cleanly and exits
@@ -179,116 +194,4 @@ module Nitra::Workers
       end
     end
   end
-
-  class Cucumber < Worker
-    def self.files
-      Dir["features/**/*.feature"].sort_by {|f| File.size(f)}.reverse
-    end
-
-    def self.filename_match?(filename)
-      filename =~ /\.feature/
-    end
-
-    def initialize(runner_id, worker_number, configuration)
-      super(runner_id, worker_number, configuration)
-    end
-
-    def load_environment
-      require 'cucumber'
-      require 'nitra/ext/cucumber'
-    end
-
-    def minimal_file
-      <<-EOS
-      Feature: cucumber preloading
-        Scenario: a fake scenario
-          Given every step is unimplemented
-          When we run this file
-          Then Cucumber will load it's environment
-      EOS
-    end
-
-    ##
-    # Run a Cucumber file and write the results back to the runner.
-    #
-    # Doesn't write back to the runner if we mark the run as preloading.
-    #
-    def run_file(filename, preloading = false)
-      @cuke_runtime ||= ::Cucumber::ResetableRuntime.new  # This runtime gets reused, this is important as it's the part that loads the steps...
-      begin
-        result = 1
-        cuke_config = ::Cucumber::Cli::Configuration.new(io, io)
-        cuke_config.parse!(["--no-color", "--require", "features", filename])
-        @cuke_runtime.configure(cuke_config)
-        @cuke_runtime.run!
-        result = 0 unless @cuke_runtime.results.failure?
-      rescue LoadError
-        io << "\nCould not load file #{filename}\n\n"
-      end
-      if preloading
-        puts(io.string)
-      else
-        channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string, "worker_number" => worker_number)
-      end
-    end
-
-    def clean_up
-      @cuke_runtime.reset
-    end
-  end
-
-  class Rspec < Worker
-    def self.files
-      Dir["spec/**/*_spec.rb"].sort_by {|f| File.size(f)}.reverse
-    end
-
-    def self.filename_match?(filename)
-      filename =~ /_spec\.rb/
-    end
-
-    def initialize(runner_id, worker_number, configuration)
-      super(runner_id, worker_number, configuration)
-    end
-
-    def load_environment
-      require 'spec/spec_helper'
-      RSpec::Core::Runner.disable_autorun!
-    end
-
-    def minimal_file
-      <<-EOS
-      require 'spec_helper'
-      describe('nitra preloading') do
-        it('preloads the fixtures') do
-          1.should == 1
-        end
-      end
-      EOS
-    end
-
-    ##
-    # Run an rspec file and write the results back to the runner.
-    #
-    # Doesn't write back to the runner if we mark the run as preloading.
-    #
-    def run_file(filename, preloading = false)
-      begin
-        result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
-      rescue LoadError
-        io << "\nCould not load file #{filename}\n\n"
-        result = 1
-      end
-      if preloading
-        puts io.string
-      else
-        channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string, "worker_number" => worker_number)
-      end
-    end
-
-    def clean_up
-      RSpec.reset
-    end
-  end
-
-  WORKERS = {"rspec" => Nitra::Workers::Rspec, "cucumber" => Nitra::Workers::Cucumber}
 end
