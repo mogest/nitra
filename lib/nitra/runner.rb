@@ -102,6 +102,7 @@ class Nitra::Runner
     output = Nitra::Utils.capture_output do
       require 'config/application'
       Rails.application.require_environment!
+      ActiveRecord::Base.connection.disconnect!
     end
 
     server_channel.write("command" => "stdout", "process" => "rails initialisation", "text" => output)
@@ -151,10 +152,13 @@ class Nitra::Runner
   end
 
   def handle_result(data)
+    results = ""
     # Rspec result
     if m = data['text'].match(/(\d+) examples?, (\d+) failure/)
       example_count = m[1].to_i
       failure_count = m[2].to_i
+      results = data['text'].gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
+
     # Cucumber result
     elsif m = data['text'].match(/(\d+) scenarios?.+$/)
       example_count = m[1].to_i
@@ -163,15 +167,15 @@ class Nitra::Runner
       else
         failure_count = 0
       end
+      results = data['text'] if failure_count > 0
     end
-    stripped_data = data['text'].gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
     server_channel.write(
       "command"       => "result",
       "filename"      => data["filename"],
       "return_code"   => data["return_code"],
       "example_count" => example_count,
       "failure_count" => failure_count,
-      "text"          => stripped_data)
+      "text"          => results)
   end
 
   def handle_ready(data, worker_channel)
