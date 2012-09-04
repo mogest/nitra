@@ -61,7 +61,7 @@ class Nitra::Runner
         IO.select([rd])
         text = rd.read
         break if text.nil? || text.length.zero?
-        output << text
+        output.concat text
       end
       rd.close
       server_channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
@@ -86,7 +86,7 @@ class Nitra::Runner
         IO.select([rd])
         text = rd.read
         break if text.nil? || text.length.zero?
-        output << text
+        output.concat text
       end
       rd.close
       server_channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
@@ -151,13 +151,24 @@ class Nitra::Runner
     end
   end
 
+  ##
+  # This parses the results we got back from the worker.
+  #
+  # It needs rewriting when we finally rewrite the workers to use custom formatters.
+  #
+  # Also, it's probably buggy as hell...
+  #
   def handle_result(data)
-    results = ""
+    #defaults - theoretically anything can end up here so we just want to pass on useful data
+    result_text = ""
+    example_count = 0
+    failure_count = 0
+    return_code = data["return_code"].to_i
+
     # Rspec result
     if m = data['text'].match(/(\d+) examples?, (\d+) failure/)
       example_count = m[1].to_i
       failure_count = m[2].to_i
-      results = data['text'].gsub(/^[.FP*]+$/, '').gsub(/\nFailed examples:.+/m, '').gsub(/^Finished in.+$/, '').gsub(/^\d+ example.+$/, '').gsub(/^No examples found.$/, '').gsub(/^Failures:$/, '')
 
     # Cucumber result
     elsif m = data['text'].match(/(\d+) scenarios?.+$/)
@@ -167,15 +178,17 @@ class Nitra::Runner
       else
         failure_count = 0
       end
-      results = data['text'] if failure_count > 0
     end
+
+    result_text = data['text'] if failure_count > 0 || return_code != 0
+
     server_channel.write(
       "command"       => "result",
       "filename"      => data["filename"],
-      "return_code"   => data["return_code"],
+      "return_code"   => return_code,
       "example_count" => example_count,
       "failure_count" => failure_count,
-      "text"          => results)
+      "text"          => result_text)
   end
 
   def handle_ready(data, worker_channel)

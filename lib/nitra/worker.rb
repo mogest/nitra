@@ -164,7 +164,7 @@ module Nitra::Workers
         IO.select([rd])
         text = rd.read
         break if text.nil? || text.length.zero?
-        output << text
+        output.puts text
       end
       rd.close
       Process.wait(@forked_worker_pid) if @forked_worker_pid

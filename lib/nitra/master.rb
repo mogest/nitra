@@ -51,7 +51,8 @@ class Nitra::Master
             progress.files_completed += 1
             progress.example_count += data["example_count"] || 0
             progress.failure_count += data["failure_count"] || 0
-            progress.output << data["text"]
+            progress.output.concat data["text"]
+            progress.failure = true unless data["return_code"].to_i == 0
             yield progress, data
           when "debug"
             if configuration.debug

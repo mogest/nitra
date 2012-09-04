@@ -25,7 +25,7 @@ class Nitra::Client
     puts "\n#{progress.files_completed}/#{progress.file_count} files processed, #{progress.example_count} examples, #{progress.failure_count} failures"
     puts "#{$aborted ? "Aborted after" : "Finished in"} #{"%0.1f" % (Time.now-start_time)} seconds" unless configuration.quiet
 
-    !$aborted && progress.files_completed == progress.file_count && progress.failure_count.zero?
+    !$aborted && progress.files_completed == progress.file_count && progress.failure_count.zero? && !progress.failure
   end
 
   protected

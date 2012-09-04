@@ -37,9 +37,14 @@ module Nitra::Workers
       begin
         result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
       rescue LoadError
-        io << "\nCould not load file #{filename}\n\n"
+        io.puts "\nCould not load file #{filename}\n\n"
+        result = 1
+      rescue Exception => e
+        io.puts "Exception when running #{filename}: #{e.message}"
+        io.puts e.backtrace[0..7].join "\n"
         result = 1
       end
+
       if preloading
         puts io.string
       else
