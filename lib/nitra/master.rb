@@ -47,6 +47,7 @@ class Nitra::Master
             else
               channel.write "command" => "framework", "framework" => current_framework
             end
+
           when "result"
             progress.files_completed += 1
             progress.example_count += data["example_count"] || 0
@@ -54,10 +55,17 @@ class Nitra::Master
             progress.output.concat data["text"]
             progress.failure = true unless data["return_code"].to_i == 0
             yield progress, data
+
+          when "error"
+            progress.failure = true
+            progress.output.concat data["text"]
+            runners.delete channel
+
           when "debug"
             if configuration.debug
               puts "[DEBUG] #{data["text"]}"
             end
+
           when "stdout"
             if configuration.debug
               puts "STDOUT for #{data["process"]} #{data["filename"]}:\n#{data["text"]}" unless data["text"].empty?

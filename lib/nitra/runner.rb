@@ -42,55 +42,11 @@ class Nitra::Runner
     end
 
     if configuration.load_schema
-      debug "Initializing databases..."
-      rd, wr = IO.pipe
-      (1..configuration.process_count).collect do |index|
-        fork do
-          ENV["TEST_ENV_NUMBER"] = index.to_s
-          rd.close
-          $stdout.reopen(wr)
-          $stderr.reopen(wr)
-          Rake::Task["db:drop"].invoke
-          Rake::Task["db:create"].invoke
-          Rake::Task["db:schema:load"].invoke
-        end
-      end
-      wr.close
-      output = ""
-      loop do
-        IO.select([rd])
-        text = rd.read
-        break if text.nil? || text.length.zero?
-        output.concat text
-      end
-      rd.close
-      server_channel.write("command" => "stdout", "process" => "db:schema:load", "text" => output)
-      Process.waitall
+      fork_and_run_rake_tasks(["db:drop","db:create","db:schema:load"])
     end
 
     if configuration.migrate
-      debug "Migrating databases..."
-      rd, wr = IO.pipe
-      (1..configuration.process_count).collect do |index|
-        fork do
-          ENV["TEST_ENV_NUMBER"] = index.to_s
-          rd.close
-          $stdout.reopen(wr)
-          $stderr.reopen(wr)
-          Rake::Task["db:migrate"].invoke
-        end
-      end
-      wr.close
-      output = ""
-      loop do
-        IO.select([rd])
-        text = rd.read
-        break if text.nil? || text.length.zero?
-        output.concat text
-      end
-      rd.close
-      server_channel.write("command" => "stdout", "process" => "db:migrate", "text" => output)
-      Process.waitall
+      fork_and_run_rake_tasks(["db:migrate"])
     end
   end
 
@@ -219,6 +175,37 @@ class Nitra::Runner
     workers.delete worker_number
   end
 
+  ##
+  # Takes a list of rake task names to run and forks for each worker.
+  #
+  def fork_and_run_rake_tasks(tasks)
+    debug "Running tasks: #{tasks.inspect}"
+    rd, wr = IO.pipe
+    (1..configuration.process_count).collect do |index|
+      fork do
+        ENV["TEST_ENV_NUMBER"] = index.to_s
+        rd.close
+        $stdout.reopen(wr)
+        $stderr.reopen(wr)
+        tasks.each do |task|
+          Rake::Task[task].invoke
+        end
+      end
+    end
+    wr.close
+    output = ""
+    loop do
+      IO.select([rd])
+      text = rd.read
+      break if text.nil? || text.length.zero?
+      output.concat text
+    end
+    rd.close
+    successful = all_children_successful?
+    server_channel.write("command" => (successful ? 'stdout' : 'error'), "process" => tasks.inspect, "text" => output)
+    exit if !successful
+  end
+
   def debug(*text)
     if configuration.debug
       server_channel.write("command" => "debug", "text" => "runner #{runner_id}: #{text.join}")
@@ -233,5 +220,12 @@ class Nitra::Runner
     worker_pids.each {|pid| Process.kill('USR1', pid) rescue Errno::ESRCH}
     Process.waitall
     exit
+  end
+
+  ##
+  # Reap the exit codes for any forked processes and report failures.
+  #
+  def all_children_successful?
+    Process.waitall.all?{|pid, process| process.success?}
   end
 end
