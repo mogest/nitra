@@ -1,10 +1,11 @@
 class Nitra::Configuration
-  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures
+  attr_accessor :load_schema, :migrate, :debug, :quiet, :print_failures, :rake_tasks
   attr_accessor :process_count, :environment, :slaves, :slave_mode, :framework, :frameworks
 
   def initialize
     self.environment = "nitra"
     self.slaves = []
+    self.rake_tasks = {}
     calculate_default_process_count
   end
 
