@@ -58,7 +58,7 @@ class Nitra::Master
 
           when "error"
             progress.failure = true
-            progress.output.concat "ERROR " + data["process"] + data["text"]
+            progress.output.concat "ERROR " + data["process"] + " " + data["text"]
             runners.delete channel
 
           when "debug"
