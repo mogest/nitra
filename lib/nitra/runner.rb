@@ -20,9 +20,9 @@ class Nitra::Runner
   def run
     tasks.run(:before_runner)
 
-    tasks.run(:before_worker, configuration.process_count)
-
     load_rails_environment
+
+    tasks.run(:before_worker, configuration.process_count)
 
     start_workers
 
@@ -47,7 +47,7 @@ class Nitra::Runner
   protected
 
   def load_rails_environment
-    return unless File.file?('config/application')
+    return unless File.file?('config/application.rb')
     debug "Loading rails environment..."
 
     ENV["TEST_ENV_NUMBER"] = "1"
