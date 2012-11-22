@@ -47,6 +47,7 @@ class Nitra::Runner
   protected
 
   def load_rails_environment
+    return unless File.file?('config/application')
     debug "Loading rails environment..."
 
     ENV["TEST_ENV_NUMBER"] = "1"
@@ -90,7 +91,7 @@ class Nitra::Runner
         end
 
         case data['command']
-        when "debug", "stdout"
+        when "debug", "stdout", "error"
           server_channel.write(data)
 
         when "result"
