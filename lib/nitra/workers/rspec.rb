@@ -14,7 +14,6 @@ module Nitra::Workers
 
     def load_environment
       require 'rspec'
-      require './spec/spec_helper'
       RSpec::Core::Runner.disable_autorun!
     end
 
@@ -54,7 +53,13 @@ module Nitra::Workers
     end
 
     def clean_up
-      RSpec.reset
+      # Rspec.reset in 2.6 didn't destroy your rspec_rails fixture loading, we can't use it anymore for it's intended purpose.
+      # This means our world object will be slightly polluted by the preload_framework code, but that's a small price to pay
+      # to upgrade.
+      #
+      # RSpec.reset
+      #
+      RSpec.instance_variable_set(:@world, nil)
     end
   end
 end
