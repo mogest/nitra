@@ -94,7 +94,8 @@ module Nitra
         end
 
         debug "Started, using TEST_ENV_NUMBER #{ENV['TEST_ENV_NUMBER']}"
-        connect_to_database if defined? Rails
+        connect_to_database
+        reset_cache
 
         preload_framework
 
@@ -139,13 +140,18 @@ module Nitra
     # Find the database config for this TEST_ENV_NUMBER and manually initialise a connection.
     #
     def connect_to_database
+      return unless defined?(Rails)
+
       ## Config files are read at load time. Since we load rails in one env then change some flags to get different
       ## environments through forking we need always reload our database config...
       ActiveRecord::Base.configurations = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)
 
       ActiveRecord::Base.establish_connection
       debug("Connected to database #{ActiveRecord::Base.connection.current_database}")
+    end
 
+    def reset_cache
+      return unless defined?(Rails)
       Rails.cache.reset if Rails.cache.respond_to?(:reset)
     end
 
@@ -166,6 +172,7 @@ module Nitra
           $stdout.reopen(wr)
           $stderr.reopen(wr)
           rd.close
+          connect_to_database
           run_file(filename)
           wr.close
           exit!  # at_exit hooks will be run in the parent.
