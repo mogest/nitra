@@ -54,6 +54,10 @@ module Nitra
           configuration.add_framework "rspec"
         end
 
+        opts.on("-e", "--environment ENV", String, "Set the RAILS_ENV to load") do |env|
+          configuration.environment = env
+        end
+
         opts.on_tail("-h", "--help", "Show this message") do
           puts opts
           exit
