@@ -48,6 +48,14 @@ describe Nitra::CommandLine do
       end
     end
 
+    describe "-e" do
+      it "sets the rails environment" do
+        config.expect(:environment=, nil, ["test"])
+        Nitra::CommandLine.new(config, ["-e", "test"])
+        config.verify
+      end
+    end
+
     describe "--rake-after-runner" do
       it "adds rake tasks to run after runner finishes" do
         config.expect(:add_rake_task, nil, [:after_runner, ['list:of','rake:tasks']])
