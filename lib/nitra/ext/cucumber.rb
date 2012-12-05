@@ -18,5 +18,15 @@ module Cucumber
     def reset
       @results = Results.new(nil)
     end
+
+    # Cucumber > 1.1.0 memoizes @loader which means we can't load in new files.
+    # Patch it back to how it used to work.
+    def features
+      @loader = Runtime::FeaturesLoader.new(
+        @configuration.feature_files, 
+        @configuration.filters, 
+        @configuration.tag_expression)
+      @loader.features
+    end
   end
 end
