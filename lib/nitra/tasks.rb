@@ -19,6 +19,7 @@ class Nitra::Tasks
         rd.close
         $stdout.reopen(wr)
         $stderr.reopen(wr)
+        connect_to_database
         tasks.each do |task|
           Rake::Task[task].invoke
         end
@@ -39,6 +40,10 @@ class Nitra::Tasks
   end
 
   private
+
+  def connect_to_database
+    Nitra::RailsTooling.connect_to_database
+  end
 
   ##
   # Reap the exit codes for any forked processes and report failures.
