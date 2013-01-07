@@ -1,3 +1,3 @@
-Nitra is a multi-process rspec runner.
+Nitra is a multi-process, optionally multi-server rspec and cucumber runner that uses forking to reduce memory usage and IPC to distribute builds amongst available CPUs efficiently.
 
-Copyright 2012 Roger Nesbitt, Powershop Limited, YouDo Limited.  MIT licence.
+Copyright 2012-2013 Roger Nesbitt, Powershop Limited, YouDo Limited.  MIT licence.
