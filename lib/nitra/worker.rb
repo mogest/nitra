@@ -164,7 +164,6 @@ module Nitra
           $stdout.reopen(wr)
           $stderr.reopen(wr)
           rd.close
-          connect_to_database
           run_file(filename)
           wr.close
           exit!  # at_exit hooks will be run in the parent.
