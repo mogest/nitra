@@ -42,6 +42,10 @@ module Nitra
           configuration.add_rake_task(:before_worker, rake_tasks)
         end
 
+        opts.on("r", "--reset", "Reset database, equivalent to --rake-before-worker db:reset") do
+          configuration.add_rake_task(:before_worker, "db:reset")
+        end
+
         opts.on("--slave-mode", "Run in slave mode; ignores all other command-line options") do
           configuration.slave_mode = true
         end

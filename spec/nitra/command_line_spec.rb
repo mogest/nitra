@@ -80,6 +80,22 @@ describe Nitra::CommandLine do
       end
     end
 
+    describe "-r" do
+      it "adds the db:reset rake task to run before worker starts" do
+        config.expect(:add_rake_task, nil, [:before_worker, ['db:reset']])
+        Nitra::CommandLine.new(config, ['-r'])
+        config.verify
+      end
+    end
+
+    describe "--reset" do
+      it "adds the db:reset rake task to run before worker starts" do
+        config.expect(:add_rake_task, nil, [:before_worker, ['db:reset']])
+        Nitra::CommandLine.new(config, ['--reset'])
+        config.verify
+      end
+    end
+
     describe "--rspec" do
       it "adds rspec to framework" do
         config.expect(:add_framework, nil, ['rspec'])
