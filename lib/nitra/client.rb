@@ -20,7 +20,7 @@ class Nitra::Client
       end
     end
 
-    puts progress.output.gsub(/\n\n\n+/, "\n\n")
+    puts progress.output.gsub(/\n\n\n+/, "\n\n") unless configuration.print_failures
 
     puts "\n#{progress.files_completed}/#{progress.file_count} files processed, #{progress.example_count} examples, #{progress.failure_count} failures"
     puts "#{$aborted ? "Aborted after" : "Finished in"} #{"%0.1f" % (Time.now-start_time)} seconds" unless configuration.quiet
