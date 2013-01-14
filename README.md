@@ -1,4 +1,4 @@
-#/ Nitra
+# Nitra
 Nitra is a multi-process, optionally multi-server rspec and cucumber runner that uses forking to reduce memory usage and IPC to distribute builds amongst available CPUs efficiently.
 
 ## Philosophy
@@ -49,7 +49,7 @@ Clustered commands run slightly differently. Effectively nitra will fork and exe
 
 When nitra --slave command it forks, execs it, and assumes it's another process that's running "nitra --slave-mode".
 
-### Cluster maintenance
+### Running a build cluster
 Nitra doesn't prescribe how you get your code onto the other machines in your cluster. For example you can run a git checkout on the boxes you want to build on if it's the fastest way for you. For our part - we've had the most success with rsync.
 
 Our build is run via rake tasks so we end up with a bunch of generated code to rsync files back and forth - here's a basic version that might help get you up and running:
@@ -84,6 +84,5 @@ Our build is run via rake tasks so we end up with a bunch of generated code to r
       end
     end
 
-Copyright
----------
+## Copyright
 Copyright 2012-2013 Roger Nesbitt, Powershop Limited, YouDo Limited.  MIT licence.
