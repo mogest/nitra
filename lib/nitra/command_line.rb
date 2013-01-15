@@ -42,7 +42,7 @@ module Nitra
           configuration.add_rake_task(:before_worker, rake_tasks)
         end
 
-        opts.on("r", "--reset", "Reset database, equivalent to --rake-before-worker db:reset") do
+        opts.on("-r", "--reset", "Reset database, equivalent to --rake-before-worker db:reset") do
           configuration.add_rake_task(:before_worker, "db:reset")
         end
 
