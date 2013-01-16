@@ -157,6 +157,7 @@ module Nitra
       #
       def process_file(filename)
         debug "Starting to process #{filename}"
+        start_time = Time.now
 
         rd, wr = IO.pipe
         @forked_worker_pid = fork do
@@ -181,8 +182,9 @@ module Nitra
 
         @forked_worker_pid = nil
 
+        end_time = Time.now
         channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => output, "worker_number" => worker_number) unless output.empty?
-        debug "#{filename} processed"
+        debug "#{filename} processed in #{'%0.2f' % (end_time - start_time)}s"
       end
 
 
