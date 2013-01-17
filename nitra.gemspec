@@ -12,7 +12,7 @@ spec = Gem::Specification.new do |s|
   s.bindir = 'bin'
   s.executables = `git ls-files -- bin/*`.split("\n").map{ |f| File.basename(f) }
   s.require_path     = "lib"
-  s.files = %w(README lib/nitra.rb bin/nitra) + Dir['lib/**/*.rb']
+  s.files = %w(README.md lib/nitra.rb bin/nitra) + Dir['lib/**/*.rb']
   s.test_files = `git ls-files -- {spec,features}/*`.split("\n")
 
   s.add_dependency('cucumber', '>= 1.1.9')
