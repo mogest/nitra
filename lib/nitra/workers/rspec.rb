@@ -22,7 +22,7 @@ module Nitra::Workers
       require 'spec_helper'
       describe('nitra preloading') do
         it('preloads the fixtures') do
-          1.should == 1
+          expect(1).to eq(1)
         end
       end
       EOS

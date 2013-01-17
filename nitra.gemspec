@@ -15,8 +15,8 @@ spec = Gem::Specification.new do |s|
   s.files = %w(README lib/nitra.rb bin/nitra) + Dir['lib/**/*.rb']
   s.test_files = `git ls-files -- {spec,features}/*`.split("\n")
 
-  s.add_dependency('cucumber', '~> 1.2.1')
-  s.add_dependency('rspec', '~> 2.12.0')
+  s.add_dependency('cucumber', '>= 1.1.9')
+  s.add_dependency('rspec', '~> 2.12')
 
   s.has_rdoc = false
 end

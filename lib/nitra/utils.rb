@@ -1,3 +1,5 @@
+require 'stringio'
+
 module Nitra
   class Utils
     # The following taken and modified from the 'parallel' gem.

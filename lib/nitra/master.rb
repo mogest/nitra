@@ -18,7 +18,7 @@ class Nitra::Master
 
     progress = Nitra::Progress.new
     progress.file_count = files_remaining
-    yield progress, nil
+    formatter = Nitra::Formatter.new(progress, configuration)
 
     runners = []
 
@@ -35,6 +35,8 @@ class Nitra::Master
     slave = Nitra::Slave::Client.new(configuration)
     runners += slave.connect
 
+    formatter.start
+
     while runners.length > 0
       Nitra::Channel.read_select(runners).each do |channel|
         if data = channel.read
@@ -49,16 +51,15 @@ class Nitra::Master
             end
 
           when "result"
-            progress.files_completed += 1
-            progress.example_count += data["example_count"] || 0
-            progress.failure_count += data["failure_count"] || 0
-            progress.output.concat data["text"]
-            progress.failure = true unless data["return_code"].to_i == 0
-            yield progress, data
+            examples = data["example_count"] || 0
+            failures = data["failure_count"] || 0
+            failure = data["return_code"].to_i != 0
+            progress.file_progress(examples, failures, failure, data["text"])
+            formatter.print_progress
 
           when "error"
-            progress.failure = true
-            progress.output.concat "ERROR " + data["process"] + " " + data["text"]
+            progress.fail("ERROR " + data["process"] + " " + data["text"])
+            formatter.progress
             runners.delete channel
 
           when "debug"
@@ -79,7 +80,10 @@ class Nitra::Master
 
     debug "waiting for all children to exit..."
     Process.waitall
-    progress
+
+    formatter.finish
+
+    !$aborted && progress.files_completed == progress.file_count && progress.failure_count.zero? && !progress.failure
   end
 
   protected
