@@ -1,191 +1,211 @@
 require 'stringio'
 require 'tempfile'
 
-class Nitra::Worker
-  attr_reader :runner_id, :worker_number, :configuration, :channel, :io, :framework
+module Nitra
+  module Workers
+    class Worker
+      class << self
 
-  def initialize(runner_id, worker_number, configuration)
-    @runner_id = runner_id
-    @worker_number = worker_number
-    @configuration = configuration
-    @framework = configuration.framework_shim
+        @@worker_classes = {}
 
-    ENV["TEST_ENV_NUMBER"] = (worker_number + 1).to_s
+        def inherited(klass)
+          @@worker_classes[klass.framework_name] = klass
+        end
 
-    # RSpec doesn't like it when you change the IO between invocations.
-    # So we make one object and flush it after every invocation.
-    @io = StringIO.new
-  end
+        def worker_classes
+          @@worker_classes
+        end
 
-  def fork_and_run
-    client, server = Nitra::Channel.pipe
+        ##
+        # Return the framework name of this worker
+        #
+        def framework_name
+          self.name.split("::").last.downcase
+        end
+      end
 
-    fork do
-      # This is important. We don't want anything bubbling up to the master that we didn't send there.
-      # We reopen later to get the output from the framework run.
-      $stdout.reopen('/dev/null', 'a')
-      $stderr.reopen('/dev/null', 'a')
 
-      server.close
-      @channel = client
-      run
+      attr_reader :runner_id, :worker_number, :configuration, :channel, :io
+
+      def initialize(runner_id, worker_number, configuration)
+        @runner_id = runner_id
+        @worker_number = worker_number
+        @configuration = configuration
+        @forked_worker_pid = nil
+
+        ENV["TEST_ENV_NUMBER"] = worker_number.to_s
+
+        # Frameworks don't like it when you change the IO between invocations.
+        # So we make one object and flush it after every invocation.
+        @io = StringIO.new
+      end
+
+
+      def fork_and_run
+        client, server = Nitra::Channel.pipe
+
+        pid = fork do
+          # This is important. We don't want anything bubbling up to the master that we didn't send there.
+          # We reopen later to get the output from the framework run.
+          $stdout.reopen('/dev/null', 'a')
+          $stderr.reopen('/dev/null', 'a')
+
+          trap("USR1") { interrupt_forked_worker_and_exit }
+
+          server.close
+          @channel = client
+          begin
+            run
+          rescue => e
+            channel.write("command" => "error", "process" => "init framework", "text" => e.message, "worker_number" => worker_number)
+          end
+        end
+
+        client.close
+
+        [pid, server]
+      end
+
+      protected
+      def load_environment
+        raise 'Subclasses must impliment this method.'
+      end
+
+      def minimal_file
+        raise 'Subclasses must impliment this method.'
+      end
+
+      def run_file(filename, preload = false)
+        raise 'Subclasses must impliment this method.'
+      end
+
+      def clean_up
+        raise 'Subclasses must impliment this method.'
+      end
+
+      def run
+        trap("SIGTERM") do
+          channel.write("command" => "error", "process" => "trap", "text" => 'Received SIGTERM', "worker_number" => worker_number)
+          Process.kill("SIGKILL", Process.pid)
+        end
+        trap("SIGINT") do
+          channel.write("command" => "error", "process" => "trap", "text" => 'Received SIGINT', "worker_number" => worker_number)
+          Process.kill("SIGKILL", Process.pid) 
+        end
+
+        debug "Started, using TEST_ENV_NUMBER #{ENV['TEST_ENV_NUMBER']}"
+        connect_to_database
+        reset_cache
+
+        preload_framework
+
+        # Loop until our runner passes us a message from the master to tells us we're finished.
+        loop do
+          debug "Announcing availability"
+          channel.write("command" => "ready", "framework" => self.class.framework_name, "worker_number" => worker_number)
+          debug "Waiting for next job"
+          data = channel.read
+          if data.nil? || data["command"] == "close"
+            debug "Channel closed, exiting"
+            exit
+          elsif data['command'] == "process"
+            filename = data["filename"].chomp
+            process_file(filename)
+          end
+        end
+      end
+
+      def preload_framework
+        debug "running empty spec/feature to make framework run its initialisation"
+        file = Tempfile.new("nitra")
+        begin
+          load_environment
+          file.write(minimal_file)
+          file.close
+
+          output = Nitra::Utils.capture_output do
+            run_file(file.path, true)
+          end
+
+          channel.write("command" => "stdout", "process" => "init framework", "text" => output, "worker_number" => worker_number) unless output.empty?
+        ensure
+          file.close unless file.closed?
+          file.unlink
+          io.string = ""
+        end
+        clean_up
+      end
+
+    def connect_to_database
+      if defined?(Rails)
+        Nitra::RailsTooling.connect_to_database
+        debug("Connected to database #{ActiveRecord::Base.connection.current_database}")
+      end
     end
 
-    client.close
-    server
-  end
+    def reset_cache
+      Nitra::RailsTooling.reset_cache if defined?(Rails)
+    end
 
-  protected
-  def run
-    trap("SIGTERM") { Process.kill("SIGKILL", Process.pid) }
-    trap("SIGINT") { Process.kill("SIGKILL", Process.pid) }
+      ##
+      # Process the file, forking before hand.
+      #
+      # There's two sets of data we're interested in, the output from the test framework, and any other output.
+      # 1) We capture the framework's output in the @io object and send that up to the runner in a results message.
+      # This happens in the run_x_file methods.
+      # 2) Anything else we capture off the stdout/stderr using the pipe and fire off in the stdout message.
+      #
+      def process_file(filename)
+        debug "Starting to process #{filename}"
+        start_time = Time.now
 
-    debug "Started, using TEST_ENV_NUMBER #{ENV['TEST_ENV_NUMBER']}"
-    connect_to_database
+        rd, wr = IO.pipe
+        @forked_worker_pid = fork do
+          trap('USR1') { exit! }  # at_exit hooks will be run in the parent.
+          $stdout.reopen(wr)
+          $stderr.reopen(wr)
+          rd.close
+          $0 = filename
+          run_file(filename)
+          wr.close
+          exit!  # at_exit hooks will be run in the parent.
+        end
+        wr.close
+        output = ""
+        loop do
+          IO.select([rd])
+          text = rd.read
+          break if text.nil? || text.length.zero?
+          output.concat text
+        end
+        rd.close
+        Process.wait(@forked_worker_pid) if @forked_worker_pid
 
-    preload_framework
+        @forked_worker_pid = nil
 
-    # Loop until our runner passes us a message from the master to tells us we're finished.
-    loop do
-      debug "Announcing availability"
-      channel.write("command" => "ready")
+        end_time = Time.now
+        channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => output, "worker_number" => worker_number) unless output.empty?
+        debug "#{filename} processed in #{'%0.2f' % (end_time - start_time)}s"
+      end
 
-      debug "Waiting for next job"
-      data = channel.read
-      if data.nil? || data["command"] == "close"
-        debug "Channel closed, exiting"
+
+      ##
+      # Interrupts the forked worker cleanly and exits
+      #
+      def interrupt_forked_worker_and_exit
+        Process.kill('USR1', @forked_worker_pid) if @forked_worker_pid
+        Process.waitall
         exit
       end
 
-      filename = data.fetch("filename").chomp
-
-      debug "Starting to process #{filename}"
-      process_file(filename)
-      debug "#{filename} processed"
-    end
-  end
-
-  def preload_framework
-    debug "running empty spec/feature to make framework run its initialisation"
-    file = Tempfile.new("nitra")
-    begin
-      file.write(@framework.minimal_file)
-      file.close
-      output = Nitra::Utils.capture_output do
-        run_file(file.path, true)
+      ##
+      # Sends debug data up to the runner.
+      #
+      def debug(*text)
+        if configuration.debug
+          channel.write("command" => "debug", "text" => "worker #{runner_id}.#{worker_number}: #{text.join}", "worker_number" => worker_number)
+        end
       end
-      channel.write("command" => "stdout", "process" => "init framework", "text" => output) unless output.empty?
-    ensure
-      file.close unless file.closed?
-      file.unlink
-      if @configuration.framework == :cucumber
-        @cuke_runtime.reset
-      else
-        RSpec.reset
-      end
-      io.string = ""
-    end
-  end
-
-  ##
-  # Sends debug data up to the runner.
-  #
-  def debug(*text)
-    if configuration.debug
-      channel.write("command" => "debug", "text" => "worker #{runner_id}.#{worker_number}: #{text.join}")
-    end
-  end
-
-  ##
-  # Find the database config for this TEST_ENV_NUMBER and manually initialise a connection.
-  #
-  def connect_to_database
-    database_config = YAML.load(ERB.new(IO.read("#{Rails.root}/config/database.yml")).result)[ENV["RAILS_ENV"]]
-    ActiveRecord::Base.establish_connection(database_config)
-    debug("Connected to database #{database_config["database"]}")
-    Rails.cache.reset if Rails.cache.respond_to?(:reset)
-  end
-
-  ##
-  # Process the file, forking before hand.
-  #
-  # There's two sets of data we're interested in, the output from the test framework, and any other output.
-  # 1) We capture the framework's output in the @io object and send that up to the runner in a results message.
-  # This happens in the run_x_file methods.
-  # 2) Anything else we capture off the stdout/stderr using the pipe and fire off in the stdout message.
-  #
-  def process_file(filename)
-    rd, wr = IO.pipe
-    pid = fork do
-      $stdout.reopen(wr)
-      $stderr.reopen(wr)
-      rd.close
-      run_file(filename)
-      wr.close
-      # at_exit hooks shouldn't be run, otherwise we don't get any benefit from forking because we gotta reload a whole bunch of shit...
-      Kernel.exit!
-    end
-    wr.close
-    output = ""
-    loop do
-      IO.select([rd])
-      text = rd.read
-      break if text.nil? || text.length.zero?
-      output << text
-    end
-    rd.close
-    Process.wait(pid) if pid
-    channel.write("command" => "stdout", "process" => "test framework", "filename" => filename, "text" => output) unless output.empty?
-  end
-
-  def run_file(filename, preload = false)
-    if configuration.framework == :cucumber
-      run_cucumber_file(filename, preload)
-    else
-      run_rspec_file(filename, preload)
-    end
-  end
-
-  ##
-  # Run an rspec file and write the results back to the runner.
-  #
-  # Doesn't write back to the runner if we mark the run as preloading.
-  #
-  def run_rspec_file(filename, preloading = false)
-    begin
-      result = RSpec::Core::CommandLine.new(["-f", "p", filename]).run(io, io)
-    rescue LoadError
-      io << "\nCould not load file #{filename}\n\n"
-      result = 1
-    end
-    if preloading
-      puts io.string
-    else
-      channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
-    end
-  end
-
-  ##
-  # Run a Cucumber file and write the results back to the runner.
-  #
-  # Doesn't write back to the runner if we mark the run as preloading.
-  #
-  def run_cucumber_file(filename, preloading = false)
-    @cuke_runtime ||= Cucumber::ResetableRuntime.new  # This runtime gets reused, this is important as it's the part that loads the steps...
-    begin
-      result = 1
-      cuke_config = Cucumber::Cli::Configuration.new(io, io)
-      cuke_config.parse!(["--no-color", "--require", "features", filename])
-      @cuke_runtime.configure(cuke_config)
-      @cuke_runtime.run!
-      result = 0 unless @cuke_runtime.results.failure?
-    rescue LoadError
-      io << "\nCould not load file #{filename}\n\n"
-    end
-    if preloading
-      puts(io.string)
-    else
-      channel.write("command" => "result", "filename" => filename, "return_code" => result.to_i, "text" => io.string)
     end
   end
 end

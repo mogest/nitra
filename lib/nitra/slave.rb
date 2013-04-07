@@ -54,7 +54,7 @@ module Nitra::Slave
         puts "Connection to slave runner #{runner_id} successful" if configuration.debug
         server
       else
-        $stderr.puts "Connection to slave runner #{runner_id} FAILED with message: #{response.inspect}"
+        $stderr.concat "Connection to slave runner #{runner_id} FAILED with message: #{response.inspect}"
         Process.kill("KILL", pid)
         nil
       end

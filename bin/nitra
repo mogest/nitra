@@ -1,4 +1,5 @@
 #!/usr/bin/env ruby
+$LOAD_PATH.unshift File.expand_path(File.dirname(__FILE__) + '/../lib')
 
 require 'nitra'
 
@@ -7,5 +8,5 @@ Nitra::CommandLine.new(configuration, ARGV)
 if configuration.slave_mode
   Nitra::Slave::Server.new.run
 else
-  exit Nitra::Client.new(configuration, ARGV).run ? 0 : 1
+  exit Nitra::Master.new(configuration, ARGV).run ? 0 : 1
 end
