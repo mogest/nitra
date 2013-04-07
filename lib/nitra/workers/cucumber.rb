@@ -41,11 +41,11 @@ module Nitra::Workers
         @cuke_runtime.configure(cuke_config)
         @cuke_runtime.run!
         result = 0 unless @cuke_runtime.results.failure?
-      rescue LoadError
-        io.concat "\nCould not load file #{filename}\n\n"
+      rescue LoadError => e
+        io << "\nCould not load file #{filename}: #{e.message}\n\n"
       rescue Exception => e
-        io.concat "Exception when running #{filename}: #{e.message}"
-        io.concat e.backtrace[0..7].join "\n"
+        io << "Exception when running #{filename}: #{e.message}"
+        io << e.backtrace[0..7].join("\n")
       end
 
       if preloading
