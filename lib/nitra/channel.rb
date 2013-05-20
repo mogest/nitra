@@ -42,7 +42,7 @@ module Nitra
 
     def write(data)
       encoded = YAML.dump(data)
-      wr.write("NITRA,#{encoded.length}\n#{encoded}")
+      wr.write("NITRA,#{encoded.bytesize}\n#{encoded}")
     rescue Errno::EPIPE
       raise if raise_epipe_on_write_error
     end
