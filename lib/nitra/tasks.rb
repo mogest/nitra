@@ -20,7 +20,7 @@ class Nitra::Tasks
         $stdout.reopen(wr)
         $stderr.reopen(wr)
         connect_to_database
-        tasks.each do |task|
+        Array(tasks).each do |task|
           Rake::Task[task].invoke
         end
       end
